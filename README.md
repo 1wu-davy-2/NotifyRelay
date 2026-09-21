@@ -44,6 +44,15 @@ make all
 
 > ⚠️ 构建脚本**显式固定 `GOARCH=amd64`**。在 32 位工具链上开发时不要依赖宿主默认值。
 
+跑测试：
+
+```bash
+GOMAXPROCS=2 GOMEMLIMIT=1GiB go test ./... -p 2 -parallel 2
+```
+
+**资源限制不是可选项**——不加限制的 `go test` 会把 CPU 跑满一两分钟。`build.ps1` 和 `Makefile`
+里已经带上这些参数了。
+
 ```powershell
 go run ./cmd/notifyrelay --config configs/notifyrelay.example.yaml
 ```
@@ -341,6 +350,13 @@ make all                   # Git Bash / Linux / macOS
 ```
 
 The build pins `GOARCH=amd64` explicitly.
+
+```bash
+GOMAXPROCS=2 GOMEMLIMIT=1GiB go test ./... -p 2 -parallel 2
+```
+
+The resource limits are not optional — an unbounded `go test` will sit at 100%
+CPU for a minute or two. `build.ps1` and the `Makefile` already pass them.
 
 ```bash
 go run ./cmd/notifyrelay --config configs/notifyrelay.example.yaml

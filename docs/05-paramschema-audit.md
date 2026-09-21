@@ -524,12 +524,25 @@ $ grep -c 'SECRETPATH\|SUPERSECRETTOKEN123\|s3cr3t-hmac-key' server.log
 
 ## 附：关于测试文件
 
-本文件引用的测试（`email/config_test.go`、`channel/all/schema_test.go`、
-`router/skip_reason_test.go`、`router/probe_leak_test.go`、`smtpin/class_test.go` 等）
-**在本地工作区运行并通过，但未随提交进入公开仓库**——
-项目约定 `*_test.go` 不纳入 commit（见全局规则）。
+本文件引用的测试**全部随仓库发布**，可直接在仓库中按路径找到：
 
-因此本文档中标注"实测"的运行结果**无法由仓库内容复现**；
-`§3.1`、`§3.2`、`§6` 的 console 输出是当轮实际执行的记录。
+| 引用处 | 文件 |
+|---|---|
+| §3.1 `publicSpec` 的脱敏断言 | `internal/api/channels_test.go` |
+| §3.2 凭据擦除 | `internal/router/skip_reason_test.go`、`internal/channel/secrets_test.go` |
+| §5 `ShowIf` / `Min`/`Max` | `internal/channel/all/schema_test.go`、`internal/channel/email/config_test.go` |
+| §5 范围来自 schema | `internal/channel/email/config_test.go` |
+| §6 半开探针槽位 | `internal/router/probe_leak_test.go` |
+| `ClassNotAttempted` | `internal/router/skip_reason_test.go`、`internal/smtpin/class_test.go` |
 
-要改变这一点，把测试文件一并提交即可，本文档不需要改动。
+运行：
+
+```console
+$ GOMAXPROCS=2 GOMEMLIMIT=1GiB go test ./... -p 2 -parallel 2
+```
+
+（资源限制不是可选项：不加限制的 `go test` 会把 CPU 跑满一两分钟。）
+
+其中三条经过**变异验证**——把修复临时禁用、确认测试变红、再恢复：
+`Breaker.Abandon`、`webhook.url` 的 `Private` 标记、`port` 的 `Max` 放宽。
+一个从未失败过的测试，它的牙口是没有被证明过的。
