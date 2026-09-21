@@ -136,7 +136,12 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/api/v1/channels
 ```
 
 返回每个已注册通道类型的参数 schema、能力（支持的格式、长度上限、限流、溢出策略），
-以及哪些实例在用它——足以在不看源码的情况下写出合法配置。声明为 `private` 的参数不输出默认值。
+以及哪些实例在用它——足以在不看源码的情况下写出合法配置。
+
+声明为 `private` 的参数**不出现在这个端点的任何位置**，并且**投递失败时也不会出现在
+响应或日志里**：传输错误原本会把整个 URL 带出来，而钉钉/飞书把 token 放在 query、
+Slack 把 secret 放在 path——那几个通道的 URL 本身就是凭据。现在错误里只保留
+`scheme://host`，另外路由会按 schema 里的 `private` 声明把配置值从所有输出中擦除。
 
 ### 通道
 
@@ -181,10 +186,31 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/api/v1/channels
 | `SENT` | 完成 |
 | `PERMANENT` | 立即进死信，不重试 |
 | `TRANSIENT` | 按 `retry.backoff` 重试，耗尽后进死信 |
-| `CONNECT_ERROR` | **归还队列、不消耗重试预算** |
+| `CONNECT_ERROR` | 试过了但没碰到对端 → **归还队列、不消耗重试预算** |
+| `NOT_ATTEMPTED` | 根本没试（熔断／配额／限流）→ **归还队列、不消耗重试预算** |
 
 最后一条是多通道场景的关键：下游集体故障时，若把连接失败也算作尝试，一次故障就会把所有消息的
 重试预算烧光、全部打成死信。`retry.max_age` 负责兜底。
+
+#### `skip_reason`：区分"连不上"和"没尝试"
+
+`CONNECT_ERROR` 的意思是"试过了，没能碰到对端"。而被熔断、被配额、被限流挡下的投递
+**根本没碰通道**——把它们报成连接失败，是让一个从没发生过的连接去解释一条消息的命运。
+所以这三类统一报 `NOT_ATTEMPTED`，并额外带一个 `skip_reason` 说明是哪一种：
+
+| 值 | 含义 |
+|---|---|
+| `breaker_open` | 通道已知不健康，暂时停用 |
+| `quota_exhausted` | 该通道的窗口额度用尽 |
+| `rate_limited` | 等不到限流令牌 |
+
+**不变式：`skip_reason` 出现 ⟺ class 是 `NOT_ATTEMPTED`。** 一个正文被切成两段、
+第一段发出去、第二段被配额挡下的投递不报这个字段——通道确实收到了消息，
+折叠结果时"未尝试"让位于真实结果。
+
+它会出现在同步响应、审计日志，以及 `GET /api/v1/messages/{id}` 的尝试历史里。
+SMTP 入口对它的回复码是 **451**（让发信方重投），不是 550——一个只是暂时被挡下的
+通知不该在这一步被退回去。
 
 重试节奏用**固定递增间隔**而非指数退避：邮件与 IM 的失败主要是灰名单和临时 4xx，指数退避的前几步
 太密（30s/60s 对邮件域毫无意义）、后几步又太疏。
@@ -372,6 +398,12 @@ schedule, permanent becomes 5xx.
 type with its parameter schema and capabilities, which is enough to write a
 valid configuration without reading the source.
 
+A parameter declared `private` appears nowhere in that document, and — since a
+transport error renders the whole URL, and for DingTalk, Feishu, Slack and WeCom
+the URL *is* the credential — it does not appear in a delivery failure either.
+Errors keep `scheme://host` and drop the rest, and the router scrubs every value
+the schema declares private from everything it emits.
+
 ### Channels
 
 | Type | Notes | Formats | Rate |
@@ -412,11 +444,36 @@ WeCom's 4096 are **byte** limits, not character counts.
 | `SENT` | done |
 | `PERMANENT` | dead-lettered immediately, never retried |
 | `TRANSIENT` | retried on the configured backoff, then dead-lettered |
-| `CONNECT_ERROR` | **returned to the queue without spending an attempt** |
+| `CONNECT_ERROR` | tried and could not reach the peer → **returned to the queue without spending an attempt** |
+| `NOT_ATTEMPTED` | never tried (breaker, quota, rate limit) → **returned to the queue without spending an attempt** |
 
 That last row matters most when several channels fail at once: charging an
 attempt for a call that never reached the peer would let one outage burn
 through every message's retry budget and dead-letter the lot.
+
+#### `skip_reason`: "could not reach it" versus "never tried"
+
+`CONNECT_ERROR` means "we tried and could not get there". A delivery held back by
+an open breaker, a spent allowance or a rate limit never touched the channel at
+all, and reporting it as a connection failure lets a connection that never
+happened explain the message's fate. Those report `NOT_ATTEMPTED`, with a
+`skip_reason` naming which limit it was:
+
+| Value | Meaning |
+|---|---|
+| `breaker_open` | the channel is known to be failing |
+| `quota_exhausted` | its allowance for the window is spent |
+| `rate_limited` | no rate-limit slot could be waited out |
+
+**The invariant: `skip_reason` is present if and only if the class is
+`NOT_ATTEMPTED`.** A message split in two whose first part went out and whose
+second was blocked reports no reason — the channel did receive it, and folding
+the results lets "not attempted" yield to the real outcome.
+
+It appears in the synchronous response, in the audit log, and in the attempt
+history at `GET /api/v1/messages/{id}`. Over SMTP it answers **451** so the
+sending MTA retries, rather than 550 — a notification that is merely held back
+should not be bounced at that point.
 
 Retries use fixed increasing intervals rather than exponential backoff, because
 mail and IM failures are dominated by greylisting and temporary 4xx, where the

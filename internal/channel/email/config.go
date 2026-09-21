@@ -58,7 +58,17 @@ type Config struct {
 	CAFile string
 }
 
+// parseConfig reads the configuration against the schema.
+//
+// specs is a parameter rather than a call to paramSchema() so that a test can
+// hand it a modified schema and watch the bound move — the only way to show
+// that the range is enforced from the declaration rather than from a copy of it
+// that happens to agree today.
 func parseConfig(raw map[string]any) (Config, error) {
+	return parseConfigWith(raw, paramSchema())
+}
+
+func parseConfigWith(raw map[string]any, specs []channel.ParamSpec) (Config, error) {
 	var cfg Config
 	var err error
 
@@ -66,11 +76,8 @@ func parseConfig(raw map[string]any) (Config, error) {
 		return cfg, err
 	}
 
-	if cfg.Port, err = channel.IntParamOr(raw, "port", defaultPort); err != nil {
+	if cfg.Port, err = channel.IntParamBounded(raw, specs, "port", defaultPort); err != nil {
 		return cfg, err
-	}
-	if cfg.Port < 1 || cfg.Port > 65535 {
-		return cfg, fmt.Errorf("parameter \"port\": %d is out of range 1-65535", cfg.Port)
 	}
 
 	if cfg.From, err = channel.StringParam(raw, "from"); err != nil {
@@ -117,11 +124,11 @@ func parseConfig(raw map[string]any) (Config, error) {
 		return cfg, err
 	}
 
+	// A non-positive timeout is refused by DurationParamOr itself: every
+	// duration this service takes is a timeout, and "wait no time at all" is a
+	// missing value rather than a short one.
 	if cfg.Timeout, err = channel.DurationParamOr(raw, "timeout", defaultTimeout); err != nil {
 		return cfg, err
-	}
-	if cfg.Timeout <= 0 {
-		return cfg, fmt.Errorf("parameter \"timeout\" must be greater than zero")
 	}
 
 	return cfg, nil
@@ -185,6 +192,8 @@ func (c *Config) parseAuthType(raw map[string]any) error {
 // It is the source of truth for the operator form (M5) and the /channels
 // documentation endpoint (M2); keep it in step with parseConfig.
 func paramSchema() []channel.ParamSpec {
+	minPort, maxPort := 1.0, 65535.0
+
 	return []channel.ParamSpec{
 		{
 			Name: "host", Type: channel.ParamString, Required: true,
@@ -192,6 +201,7 @@ func paramSchema() []channel.ParamSpec {
 		},
 		{
 			Name: "port", Type: channel.ParamInt, Default: defaultPort,
+			Min: &minPort, Max: &maxPort,
 			Label: "Port", Desc: "Defaults to 587.",
 		},
 		{

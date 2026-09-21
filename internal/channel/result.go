@@ -13,15 +13,47 @@ import (
 // and whether the failure counts against the channel's health.
 //
 // Everything else about a Channel is replaceable; this is not.
+//
+// The constants are ordered by severity, and ResultClass values are compared
+// with > to fold a sequential send's parts into one outcome. The order is
+// deliberate:
+//
+//	ClassNotAttempted < ClassSent < ClassConnectError < ClassTransient < ClassPermanent
+//
+// ClassNotAttempted sorts lowest because it carries no outcome at all — it
+// says the channel was never called. Folding it against a real result must
+// yield the real result, or a message whose first part was delivered and whose
+// second was held back for quota would be reported as never attempted.
 type ResultClass int
 
 const (
-	// ClassSent means the downstream accepted the message for delivery.
-	ClassSent ResultClass = iota
+	// ClassNotAttempted means the channel was never called.
+	//
+	// This is not a channel outcome. It is a decision the router made: the
+	// channel's breaker is open, its allowance for the window is spent, or the
+	// rate limit could not be waited out. The peer was never contacted, so
+	// nothing is known about its health, nothing is charged to its quota, and
+	// the message has not spent a retry.
+	//
+	// It is deliberately the zero value. An unset class then means "we did not
+	// try", which fails towards waiting rather than towards claiming success.
+	//
+	// INVARIANT: this class holds if and only if the delivery carries a
+	// SkipReason naming which limit was hit. The two are set together in the
+	// router and neither is meaningful without the other.
+	ClassNotAttempted ResultClass = iota
 
-	// ClassConnectError means we never reached the peer: DNS failure,
-	// connection refused, TLS handshake failure, timeout while dialling.
-	// Retryable. Must NOT consume the channel's send quota.
+	// ClassSent means the downstream accepted the message for delivery.
+	ClassSent
+
+	// ClassConnectError means we reached for the peer and never got there: DNS
+	// failure, connection refused, TLS handshake failure, timeout while
+	// dialling. Retryable. Must NOT consume the channel's send quota.
+	//
+	// Note the difference from ClassNotAttempted, which reads similarly and is
+	// not the same: here the channel WAS called and could not be reached, so
+	// the failure is evidence about the channel. There, nothing was called and
+	// there is no evidence either way.
 	ClassConnectError
 
 	// ClassTransient means the peer explicitly asked us to try later
@@ -35,6 +67,8 @@ const (
 
 func (c ResultClass) String() string {
 	switch c {
+	case ClassNotAttempted:
+		return "NOT_ATTEMPTED"
 	case ClassSent:
 		return "SENT"
 	case ClassConnectError:
@@ -54,6 +88,8 @@ func (c ResultClass) String() string {
 // two distinct stops a rename of one from silently changing the other.
 func (c ResultClass) Wire() string {
 	switch c {
+	case ClassNotAttempted:
+		return "not_attempted"
 	case ClassSent:
 		return "sent"
 	case ClassConnectError:
@@ -68,8 +104,11 @@ func (c ResultClass) Wire() string {
 }
 
 // Retryable reports whether a retry could plausibly succeed.
+//
+// ClassNotAttempted is retryable: the limit that stopped it is temporary by
+// construction, and the message is still waiting for its first real attempt.
 func (c ResultClass) Retryable() bool {
-	return c == ClassConnectError || c == ClassTransient
+	return c == ClassNotAttempted || c == ClassConnectError || c == ClassTransient
 }
 
 // Recipient records the outcome for one addressee of a multi-recipient send.
@@ -91,6 +130,14 @@ type Result struct {
 	Detail     string      // peer response summary, safe to log; never a credential
 	Elapsed    time.Duration
 	Recipients []Recipient // nil unless the channel addresses recipients individually
+}
+
+// NotAttempted builds a "the channel was never called" result.
+//
+// Only the router produces this. A Channel implementation that returns it is
+// claiming it did not run, which is a contradiction — it is answering.
+func NotAttempted(err error, detail string) Result {
+	return Result{Class: ClassNotAttempted, Err: err, Detail: detail}
 }
 
 // Sent builds a success result.
@@ -142,9 +189,14 @@ func FromRecipients(rs []Recipient) Result {
 		if r.Accepted {
 			class = ClassSent
 			accepted++
-		} else if class == ClassSent {
+		} else if class == ClassSent || class == ClassNotAttempted {
 			// A channel reported a failure without classifying it. Treat it as
-			// permanent rather than letting the zero value pass as success.
+			// permanent rather than letting an unset class pass as success.
+			//
+			// ClassNotAttempted belongs here too: it describes a decision made
+			// before a call, and no recipient of a call that happened can be in
+			// that state. Seeing it here means the channel built the recipient
+			// list without classifying an entry.
 			class = ClassPermanent
 		}
 		if class > worst {

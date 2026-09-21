@@ -53,6 +53,11 @@ CREATE TABLE IF NOT EXISTS attempts (
     class       TEXT    NOT NULL,
     detail      TEXT    NOT NULL DEFAULT '',
     error       TEXT    NOT NULL DEFAULT '',
+    -- Why the channel was never called (breaker_open | quota_exhausted |
+    -- rate_limited). Empty for an attempt that reached the channel. The class
+    -- alone cannot say this: a skipped delivery and an unreachable one are
+    -- both CONNECT_ERROR.
+    skip_reason TEXT    NOT NULL DEFAULT '',
     elapsed_ms  INTEGER NOT NULL DEFAULT 0,
     created_at  INTEGER NOT NULL
 );

@@ -228,7 +228,10 @@ func (s *session) Data(r io.Reader) error {
 		switch res.Class() {
 		case channel.ClassSent:
 			// nothing to record here; the router already audited it
-		case channel.ClassConnectError, channel.ClassTransient:
+		case channel.ClassNotAttempted, channel.ClassConnectError, channel.ClassTransient:
+			// Not attempted belongs here, not in the permanent branch. An open
+			// breaker or a spent allowance is a temporary condition, and 451
+			// tells the sending MTA to come back rather than bouncing the mail.
 			retryable = true
 		default:
 			permanent = true

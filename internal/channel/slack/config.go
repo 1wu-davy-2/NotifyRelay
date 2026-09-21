@@ -43,6 +43,10 @@ type Config struct {
 }
 
 func parseConfig(raw map[string]any) (Config, error) {
+	// The schema is the source of the bounds applied below; parseConfig does
+	// not carry a second copy of them.
+	specs := paramSchema()
+
 	var cfg Config
 	var err error
 
@@ -78,15 +82,9 @@ func parseConfig(raw map[string]any) (Config, error) {
 	if cfg.Timeout, err = channel.DurationParamOr(raw, "timeout", defaultTimeout); err != nil {
 		return cfg, err
 	}
-	if cfg.Timeout <= 0 {
-		return cfg, fmt.Errorf("parameter \"timeout\" must be greater than zero")
-	}
 
-	if cfg.RatePerSec, err = channel.FloatParamOr(raw, "rate_per_sec", defaultRatePerSec); err != nil {
+	if cfg.RatePerSec, err = channel.FloatParamBounded(raw, specs, "rate_per_sec", defaultRatePerSec); err != nil {
 		return cfg, err
-	}
-	if cfg.RatePerSec < 0 {
-		return cfg, fmt.Errorf("parameter \"rate_per_sec\" must not be negative")
 	}
 
 	if cfg.CAFile, err = channel.StringParamOr(raw, "ca_file", ""); err != nil {
@@ -97,6 +95,8 @@ func parseConfig(raw map[string]any) (Config, error) {
 }
 
 func paramSchema() []channel.ParamSpec {
+	zero := 0.0
+
 	specs := []channel.ParamSpec{
 		{
 			Name: "webhook_url", Type: channel.ParamString, Private: true,
@@ -117,7 +117,7 @@ func paramSchema() []channel.ParamSpec {
 			Label: "Request timeout",
 		},
 		{
-			Name: "rate_per_sec", Type: channel.ParamFloat, Default: defaultRatePerSec,
+			Name: "rate_per_sec", Type: channel.ParamFloat, Default: defaultRatePerSec, Min: &zero,
 			Label: "Rate limit",
 			Desc:  "Messages per second. Slack allows about one; 0 disables the limit.",
 		},

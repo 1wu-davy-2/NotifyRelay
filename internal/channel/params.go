@@ -71,6 +71,48 @@ func IntParamOr(cfg map[string]any, name string, def int) (int, error) {
 	}
 }
 
+// IntParamBounded reads an optional integer parameter and applies the bounds
+// its ParamSpec declares.
+//
+// This is how a channel's parser enforces a range without owning a copy of it.
+// The bound lives in paramSchema — the same declaration the operator form is
+// generated from and the same one /api/v1/channels documents — so there is one
+// number rather than three that drift.
+func IntParamBounded(cfg map[string]any, specs []ParamSpec, name string, def int) (int, error) {
+	n, err := IntParamOr(cfg, name, def)
+	if err != nil {
+		return 0, err
+	}
+	if err := rangeIn(specs, name, float64(n)); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// FloatParamBounded reads an optional numeric parameter and applies the bounds
+// its ParamSpec declares.
+func FloatParamBounded(cfg map[string]any, specs []ParamSpec, name string, def float64) (float64, error) {
+	n, err := FloatParamOr(cfg, name, def)
+	if err != nil {
+		return 0, err
+	}
+	if err := rangeIn(specs, name, n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// rangeIn applies the named parameter's declared bounds. A name with no spec,
+// or a spec with no bounds, is unconstrained.
+func rangeIn(specs []ParamSpec, name string, n float64) error {
+	for _, s := range specs {
+		if s.Name == name {
+			return checkRange(s, n)
+		}
+	}
+	return nil
+}
+
 // FloatParamOr reads an optional numeric parameter.
 func FloatParamOr(cfg map[string]any, name string, def float64) (float64, error) {
 	v, ok := cfg[name]
@@ -104,6 +146,11 @@ func BoolParamOr(cfg map[string]any, name string, def bool) (bool, error) {
 
 // DurationParamOr reads an optional duration parameter written as a string
 // such as "10s".
+//
+// A non-positive duration is refused here rather than by each caller. Every
+// duration in this service is a timeout, and "wait no time at all" is not a
+// shorter timeout — it is a missing one, which reads as an immediate failure
+// rather than as a mistake. Six channels were checking this individually.
 func DurationParamOr(cfg map[string]any, name string, def time.Duration) (time.Duration, error) {
 	v, ok := cfg[name]
 	if !ok || v == nil {
@@ -116,6 +163,9 @@ func DurationParamOr(cfg map[string]any, name string, def time.Duration) (time.D
 	d, err := time.ParseDuration(s)
 	if err != nil {
 		return 0, fmt.Errorf("parameter %q: %w", name, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("parameter %q must be greater than zero, got %q", name, s)
 	}
 	return d, nil
 }

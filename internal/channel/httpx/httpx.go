@@ -18,6 +18,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -128,7 +129,7 @@ func (c *Client) PostRaw(
 ) (channel.Result, []byte) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return channel.Permanent(fmt.Errorf("build request: %w", err), "the endpoint URL is not usable"), nil
+		return channel.Permanent(redactEndpoint(err, url), "the endpoint URL is not usable"), nil
 	}
 
 	if contentType != "" {
@@ -146,7 +147,7 @@ func (c *Client) PostRaw(
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return ClassifyError(err), nil
+		return ClassifyError(err, url), nil
 	}
 	defer resp.Body.Close()
 
@@ -192,31 +193,84 @@ func ClassifyStatus(status int, body []byte, retryAfter string) channel.Result {
 //
 // Nothing here reached a peer that gave a verdict, so every case is
 // CONNECT_ERROR — retryable, and not charged against the channel's quota.
-func ClassifyError(err error) channel.Result {
+//
+// endpoint is the URL the call was aimed at. It is required rather than
+// optional because the error it produces is quoted in the API response and
+// written to the audit trail, and for several channels the credential is part
+// of that URL. Making the parameter mandatory means a new caller cannot forget
+// it and quietly reintroduce the leak.
+func ClassifyError(err error, endpoint string) channel.Result {
 	if err == nil {
 		return channel.Sent("")
 	}
 
 	var opErr *net.OpError
 	if errors.As(err, &opErr) && opErr.Op == "dial" {
-		return channel.ConnectError(err, "never reached the endpoint")
+		return channel.ConnectError(redactEndpoint(err, endpoint), "never reached the endpoint")
 	}
 	var dnsErr *net.DNSError
 	if errors.As(err, &dnsErr) {
-		return channel.ConnectError(err, "the endpoint host could not be resolved")
+		return channel.ConnectError(redactEndpoint(err, endpoint), "the endpoint host could not be resolved")
 	}
 	var certErr *tls.CertificateVerificationError
 	if errors.As(err, &certErr) {
-		return channel.ConnectError(err, "the endpoint's TLS certificate was not trusted")
+		return channel.ConnectError(redactEndpoint(err, endpoint), "the endpoint's TLS certificate was not trusted")
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return channel.ConnectError(err, "timed out before the endpoint answered")
+		return channel.ConnectError(redactEndpoint(err, endpoint), "timed out before the endpoint answered")
 	}
 	if errors.Is(err, context.Canceled) {
-		return channel.ConnectError(err, "cancelled before the endpoint answered")
+		return channel.ConnectError(redactEndpoint(err, endpoint), "cancelled before the endpoint answered")
 	}
 
-	return channel.ConnectError(err, "the request could not be completed")
+	return channel.ConnectError(redactEndpoint(err, endpoint), "the request could not be completed")
+}
+
+// endpointLabel reduces a URL to the part that is safe to quote: the scheme and
+// the host.
+//
+// The query is where DingTalk and Feishu put their access token; the path is
+// where Slack puts its webhook secret. Both are credentials that happen to look
+// like a URL, and the host is the only part an operator needs in order to act
+// on the message. Which endpoint failed is answered by "hooks.slack.com"; what
+// the secret was is answered by nothing that belongs in a log.
+func endpointLabel(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "endpoint"
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+// endpointError is a URL error with the credential-bearing parts removed.
+//
+// It keeps the underlying cause reachable, so errors.Is(err,
+// context.DeadlineExceeded) and the dial/DNS/TLS checks above still work on the
+// redacted error — the classification must not be lost along with the secret.
+type endpointError struct {
+	op       string
+	endpoint string
+	err      error
+}
+
+func (e *endpointError) Error() string { return e.op + " " + e.endpoint + ": " + e.err.Error() }
+func (e *endpointError) Unwrap() error { return e.err }
+
+// redactEndpoint strips the path and query from any *url.Error in the chain.
+//
+// net/http wraps every transport failure in one, and its Error() renders the
+// whole URL. An error that is not a *url.Error is returned untouched: it never
+// carried the URL in the first place.
+func redactEndpoint(err error, raw string) error {
+	if err == nil {
+		return nil
+	}
+
+	var uerr *url.Error
+	if !errors.As(err, &uerr) {
+		return err
+	}
+	return &endpointError{op: uerr.Op, endpoint: endpointLabel(raw), err: uerr.Err}
 }
 
 // RetryAfterSeconds parses a Retry-After header, returning 0 when absent or

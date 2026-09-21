@@ -132,7 +132,18 @@ type Params struct {
 //
 // Channels embed this in their own schema so every channel that can
 // authenticate declares the same parameter names and the same documentation.
+//
+// The ShowIf on each credential is what makes the set usable as a form. Ten
+// parameters of which at most three apply at a time, with none of them marked
+// required, is a form that cannot tell an operator what it wants — and
+// FromParams below enforces exactly the same shape at startup, so the two
+// disagreeing is what an operator would experience as "the form let me save
+// something that will not start".
 func ParamSpecs() []channel.ParamSpec {
+	when := func(mode string) *channel.Condition {
+		return &channel.Condition{Field: "auth_type", Equals: mode}
+	}
+
 	return []channel.ParamSpec{
 		{
 			Name: "auth_type", Type: channel.ParamEnum, Default: "none",
@@ -140,39 +151,39 @@ func ParamSpecs() []channel.ParamSpec {
 			Label:  "Authentication", Desc: "How to authenticate to the endpoint.",
 		},
 		{
-			Name: "token", Type: channel.ParamString, Private: true,
+			Name: "token", Type: channel.ParamString, Private: true, ShowIf: when("bearer"),
 			Label: "Bearer token", Desc: "Used when auth_type is bearer. Write as `!env ...`.",
 		},
 		{
-			Name: "username", Type: channel.ParamString,
+			Name: "username", Type: channel.ParamString, ShowIf: when("basic"),
 			Label: "Username", Desc: "Used when auth_type is basic.",
 		},
 		{
-			Name: "password", Type: channel.ParamString, Private: true,
+			Name: "password", Type: channel.ParamString, Private: true, ShowIf: when("basic"),
 			Label: "Password", Desc: "Used when auth_type is basic. Write as `!env ...`.",
 		},
 		{
-			Name: "header_name", Type: channel.ParamString,
+			Name: "header_name", Type: channel.ParamString, ShowIf: when("header"),
 			Label: "Header name", Desc: "Used when auth_type is header.",
 		},
 		{
-			Name: "header_value", Type: channel.ParamString, Private: true,
+			Name: "header_value", Type: channel.ParamString, Private: true, ShowIf: when("header"),
 			Label: "Header value", Desc: "Used when auth_type is header. Write as `!env ...`.",
 		},
 		{
-			Name: "secret", Type: channel.ParamString, Private: true,
+			Name: "secret", Type: channel.ParamString, Private: true, ShowIf: when("hmac"),
 			Label: "Signing secret", Desc: "Used when auth_type is hmac. Write as `!env ...`.",
 		},
 		{
-			Name: "signature_header", Type: channel.ParamString, Default: "X-Signature",
+			Name: "signature_header", Type: channel.ParamString, Default: "X-Signature", ShowIf: when("hmac"),
 			Label: "Signature header", Desc: "Used when auth_type is hmac.",
 		},
 		{
-			Name: "signature_prefix", Type: channel.ParamString,
+			Name: "signature_prefix", Type: channel.ParamString, ShowIf: when("hmac"),
 			Label: "Signature prefix", Desc: "Prepended to the digest, for example \"sha256=\".",
 		},
 		{
-			Name: "signature_base64", Type: channel.ParamBool,
+			Name: "signature_base64", Type: channel.ParamBool, ShowIf: when("hmac"),
 			Label: "Base64 signature", Desc: "Emit the digest as base64 instead of hex.",
 		},
 	}

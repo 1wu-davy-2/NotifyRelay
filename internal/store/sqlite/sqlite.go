@@ -122,7 +122,70 @@ func (s *Store) migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("sqlite: apply schema: %w", err)
 	}
+	return s.addColumns(ctx)
+}
+
+// addColumns brings an existing database up to a schema that gained a column.
+//
+// CREATE TABLE IF NOT EXISTS is the whole migration strategy, and it has one
+// blind spot: a table that already exists is left exactly as it was, so a new
+// column in the DDL never reaches a database created before it. That is fine
+// while the shape is stable and wrong the moment it is not, so the first column
+// added pays for the mechanism — a check against the table's own description
+// and an ALTER for whatever is missing.
+//
+// Deliberately additive: this can add columns and nothing else. Dropping or
+// retyping one needs a real migration with a data copy, and that is a different
+// piece of work from "the new build should still start".
+func (s *Store) addColumns(ctx context.Context) error {
+	added := []struct{ table, column, ddl string }{
+		{"attempts", "skip_reason", `ALTER TABLE attempts ADD COLUMN skip_reason TEXT NOT NULL DEFAULT ''`},
+	}
+
+	for _, a := range added {
+		has, err := s.hasColumn(ctx, a.table, a.column)
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, a.ddl); err != nil {
+			return fmt.Errorf("sqlite: add %s.%s: %w", a.table, a.column, err)
+		}
+	}
 	return nil
+}
+
+// hasColumn reports whether a table already has a column.
+//
+// PRAGMA table_info cannot be parameterised, so the table name is interpolated
+// — safe here because every caller passes a literal from the list above, never
+// anything that came from outside the process.
+func (s *Store) hasColumn(ctx context.Context, table, column string) (bool, error) {
+	rows, err := s.db.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil {
+		return false, fmt.Errorf("sqlite: describe %s: %w", table, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			ctype      string
+			notNull    int
+			defaultVal any
+			pk         int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &defaultVal, &pk); err != nil {
+			return false, fmt.Errorf("sqlite: describe %s: %w", table, err)
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // Ping implements store.Store.

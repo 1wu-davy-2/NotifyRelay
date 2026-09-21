@@ -24,6 +24,34 @@ import (
 	"notifyrelay/internal/quota"
 )
 
+// SkipReason names why a delivery never reached its channel.
+//
+// It exists because the class alone cannot say which limit was hit. All three
+// refusals report ClassNotAttempted — that is what the class is for — but an
+// operator staring at a stalled queue needs to know whether to chase the
+// endpoint or wait for a window to roll over, and those are opposite actions.
+//
+// INVARIANT: SkipReason is set if and only if the class is
+// channel.ClassNotAttempted. The two are assigned together below and neither is
+// meaningful without the other. A delivery whose first part went out and whose
+// second was held back reports no reason: the channel did receive it, so there
+// is no limit to name, and folding the un-attempted part into the class yields
+// the real outcome because ClassNotAttempted sorts lowest.
+type SkipReason string
+
+const (
+	// SkipBreakerOpen: the channel is known to be failing.
+	SkipBreakerOpen SkipReason = "breaker_open"
+	// SkipQuotaExhausted: the channel's allowance for the window is spent.
+	SkipQuotaExhausted SkipReason = "quota_exhausted"
+	// SkipRateLimited: waiting for the channel's rate limit would outlast the
+	// delivery's own deadline.
+	SkipRateLimited SkipReason = "rate_limited"
+
+	// skipNone is what an attempted delivery reports.
+	skipNone SkipReason = ""
+)
+
 // TargetResult is the outcome for one target of a request.
 type TargetResult struct {
 	Target      string              `json:"target"`
@@ -35,11 +63,20 @@ type TargetResult struct {
 	ElapsedMS   int64               `json:"elapsed_ms"`
 	Recipients  []channel.Recipient `json:"recipients,omitempty"`
 
+	// SkipReason is present only when the channel was never called.
+	SkipReason SkipReason `json:"skip_reason,omitempty"`
+
 	class channel.ResultClass
 }
 
 // Class returns the classification behind Status.
 func (t TargetResult) Class() channel.ResultClass { return t.class }
+
+// Reason returns why the channel was skipped, or "" if it was called.
+func (t TargetResult) Reason() SkipReason { return t.SkipReason }
+
+// WasSkipped reports whether the channel was never invoked.
+func (t TargetResult) WasSkipped() bool { return t.SkipReason != skipNone }
 
 // Options configures a Router.
 type Options struct {
@@ -62,6 +99,7 @@ type Router struct {
 	instances      map[string]channel.Channel
 	types          map[string]string
 	quotas         map[string]quota.Limits
+	secrets        map[string][]string
 	deliverTimeout time.Duration
 	recorder       audit.Recorder
 	limiter        *limiter
@@ -84,6 +122,7 @@ func New(opts Options) (*Router, error) {
 		instances:      make(map[string]channel.Channel),
 		types:          make(map[string]string),
 		quotas:         make(map[string]quota.Limits),
+		secrets:        make(map[string][]string),
 		deliverTimeout: opts.DeliverTimeout,
 		recorder:       opts.Audit,
 		limiter:        newLimiter(),
@@ -122,6 +161,11 @@ func New(opts Options) (*Router, error) {
 			PerDay:    c.Quota.PerDay,
 			PerMonth:  c.Quota.PerMonth,
 		}
+		// Read once, here, from the schema the channel already declares. Doing
+		// it per delivery would re-walk the same handful of parameters on the
+		// hot path, and a credential's value does not change while the process
+		// runs.
+		r.secrets[c.Name] = channel.SecretValues(ch.ParamSchema(), c.Config)
 	}
 
 	return r, nil
@@ -203,11 +247,48 @@ func (r *Router) Deliver(ctx context.Context, requestID, target string, msg *mes
 	// spend the channel's allowance, or an outage would eat the day's quota
 	// without a single message being sent.
 	if r.breakers != nil && !r.allowDelivery(ctx, name) {
-		res.Status = channel.ClassConnectError.Wire()
-		res.Error = "channel is not accepting deliveries"
-		res.class = channel.ClassConnectError
+		const why = "channel is not accepting deliveries"
+		res.Status = channel.ClassNotAttempted.Wire()
+		res.Error = why
+		res.SkipReason = SkipBreakerOpen
+		res.class = channel.ClassNotAttempted
 		return r.finish(ctx, requestID, res, start)
 	}
+
+	// called records whether the channel was actually invoked. A delivery held
+	// back by the breaker, by a spent allowance or by a rate limit says
+	// something about this deployment's budget, not about the channel's health
+	// — and feeding it to the breaker would let a busy hour take a perfectly
+	// good channel out of service.
+	//
+	// skipped names which of those it was. Both are read by the deferred
+	// settlement below, so they are declared before it.
+	var (
+		overall channel.Result
+		called  bool
+		skipped SkipReason
+	)
+
+	// Admitting a delivery may have taken a half-open probe slot, and every
+	// path out of this function has to give it back — by reporting an outcome,
+	// or by abandoning it when the channel was never called. Deferred rather
+	// than repeated at each return on purpose: the path that forgot would
+	// strand the slot for the life of the process, and with half_open_probes: 1
+	// a single stranded slot is a channel that refuses every delivery until a
+	// restart. That is a worse outage than the one the breaker was protecting
+	// against.
+	defer func() {
+		if r.breakers == nil {
+			return
+		}
+		b := r.breakers.For(name)
+		now := time.Now()
+		if called {
+			b.Record(ctx, overall.Class, now)
+			return
+		}
+		b.Abandon(ctx, now)
+	}()
 
 	// The channel declares what it can render and how long it may be; the core
 	// does the adapting. Channel implementations never convert formats.
@@ -221,23 +302,14 @@ func (r *Router) Deliver(ctx context.Context, requestID, target string, msg *mes
 		return r.finish(ctx, requestID, res, start)
 	}
 
-	var (
-		overall channel.Result
-		// called records whether the channel was actually invoked. A delivery
-		// held back by the breaker, by a spent allowance or by a rate limit
-		// says something about this deployment's budget, not about the
-		// channel's health — and feeding it to the breaker would let a busy
-		// hour take a perfectly good channel out of service.
-		called bool
-	)
-
 	for i, part := range parts {
 		// Reserve the allowance before the call, per call. A body split into
 		// three parts is three calls to the endpoint, and the platform counts
 		// them that way.
 		reservation, ok, why := r.reserve(ctx, name)
 		if !ok {
-			one := channel.ConnectError(errors.New(why), why)
+			skipped = SkipQuotaExhausted
+			one := channel.NotAttempted(errors.New(why), why)
 			if i == 0 {
 				overall = one
 			} else {
@@ -247,9 +319,15 @@ func (r *Router) Deliver(ctx context.Context, requestID, target string, msg *mes
 		}
 
 		// Rate limiting is applied per outbound message, not per request.
+		//
+		// Giving up here is ClassNotAttempted, not ClassTransient. It used to
+		// be Transient, which spent a retry attempt on a call that was never
+		// made — the same mistake the quota path avoids. Waiting for a token
+		// and running out of time says nothing about the channel.
 		if err := r.limiter.wait(ctx, name, capability.RatePerSec); err != nil {
 			reservation.Release(ctx)
-			one := channel.Transient(err, "gave up waiting for the channel's rate limit")
+			skipped = SkipRateLimited
+			one := channel.NotAttempted(err, "gave up waiting for the channel's rate limit")
 			if i == 0 {
 				overall = one
 			} else {
@@ -263,9 +341,18 @@ func (r *Router) Deliver(ctx context.Context, requestID, target string, msg *mes
 		cancel()
 		called = true
 
+		if one.Class == channel.ClassNotAttempted {
+			// A channel cannot report "not attempted": it just ran, so it is
+			// answering. Something did try to reach the peer and did not get
+			// there, which is exactly ClassConnectError — and normalising here
+			// is what keeps the skip_reason invariant true for every possible
+			// channel, not just the well-behaved ones.
+			one.Class = channel.ClassConnectError
+		}
+
 		// Settle by whether the peer was actually reached: a call that never
-		// got there is not charged for.
-		if one.Class == channel.ClassConnectError {
+		// got there — or was never made — is not charged for.
+		if one.Class == channel.ClassConnectError || one.Class == channel.ClassNotAttempted {
 			reservation.Release(ctx)
 		} else {
 			reservation.Commit(ctx)
@@ -278,17 +365,34 @@ func (r *Router) Deliver(ctx context.Context, requestID, target string, msg *mes
 		}
 	}
 
-	if r.breakers != nil && called {
-		r.breakers.For(name).Record(ctx, overall.Class, time.Now())
-	}
-
-	res.Status = overall.Class.Wire()
 	res.Detail = overall.Detail
-	res.class = overall.Class
 	res.Recipients = overall.Recipients
 	if overall.Err != nil {
 		res.Error = overall.Err.Error()
 	}
+
+	// Only a delivery that never reached the channel reports a reason, and the
+	// reason and the class are written together here so the invariant between
+	// them cannot drift apart.
+	//
+	// The class is forced rather than read from `overall` even though the two
+	// agree on every path that exists today — every refusal assigns
+	// ClassNotAttempted and breaks. Forcing it means a future path that reaches
+	// here without calling the channel still cannot report a class it did not
+	// earn. The direction of the mistake matters: an over-eager
+	// "not attempted" makes the queue wait, while an unearned "sent" loses a
+	// notification.
+	//
+	// A delivery whose first part went out and whose second was held back is not
+	// skipped. The channel did receive it, and the held-back part folded into
+	// `overall` as the lowest-severity class precisely so that it disappears.
+	if !called {
+		res.SkipReason = skipped
+		res.class = channel.ClassNotAttempted
+	} else {
+		res.class = overall.Class
+	}
+	res.Status = res.class.Wire()
 
 	return r.finish(ctx, requestID, res, start)
 }
@@ -348,7 +452,18 @@ func (r *Router) resolve(target string) (string, channel.Channel, error) {
 	return name, ch, nil
 }
 
+// finish is the single exit from Deliver, which makes it the one place that has
+// to be right about what leaves the process.
 func (r *Router) finish(ctx context.Context, requestID string, res TargetResult, start time.Time) TargetResult {
+	// A configured credential must never appear in an outcome. The httpx fix
+	// stops a transport error from carrying the endpoint URL, which is where
+	// several channels keep their token; this covers everything else — a
+	// response body echoed into a detail line, or a channel implementation that
+	// put a password into its own error without thinking about it.
+	secrets := r.secrets[res.Channel]
+	res.Error = channel.Redact(res.Error, secrets)
+	res.Detail = channel.Redact(res.Detail, secrets)
+
 	res.ElapsedMS = time.Since(start).Milliseconds()
 	if r.recorder != nil {
 		r.recorder.Record(ctx, audit.Entry{
@@ -359,6 +474,7 @@ func (r *Router) finish(ctx context.Context, requestID string, res TargetResult,
 			Class:       res.class,
 			Detail:      res.Detail,
 			Err:         res.Error,
+			SkipReason:  string(res.SkipReason),
 			ElapsedMS:   res.ElapsedMS,
 			Recipients:  len(res.Recipients),
 		})
@@ -367,8 +483,13 @@ func (r *Router) finish(ctx context.Context, requestID string, res TargetResult,
 }
 
 // combine folds a sequential part's result into the running one, keeping the
-// most severe class. ResultClass is ordered Sent < ConnectError < Transient <
-// Permanent, so the maximum is the outcome a caller must be told about.
+// most severe class.
+//
+// ResultClass is ordered by severity —
+// NotAttempted < Sent < ConnectError < Transient < Permanent — so the maximum
+// is the outcome a caller must be told about. ClassNotAttempted sorting lowest
+// is what makes that work: a part that was held back after an earlier part was
+// delivered must not turn the whole delivery into "never attempted".
 func combine(a, b channel.Result) channel.Result {
 	if b.Class > a.Class {
 		return b

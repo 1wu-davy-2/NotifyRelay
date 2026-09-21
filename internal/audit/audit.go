@@ -24,8 +24,14 @@ type Entry struct {
 	Class       channel.ResultClass
 	Detail      string
 	Err         string
-	ElapsedMS   int64
-	Recipients  int
+	// SkipReason names why the channel was never called, and is empty for a
+	// delivery that reached it. Without it a skipped delivery and an
+	// unreachable one look identical in the log, because both are reported as
+	// CONNECT_ERROR — and they call for opposite responses: one is a budget
+	// that ran out, the other is a channel that is down.
+	SkipReason string
+	ElapsedMS  int64
+	Recipients int
 }
 
 // Recorder records delivery outcomes.
@@ -53,6 +59,9 @@ func (r *SlogRecorder) Record(ctx context.Context, e Entry) {
 		slog.String("result", e.Class.String()),
 		slog.Int64("elapsed_ms", e.ElapsedMS),
 	}
+	if e.SkipReason != "" {
+		attrs = append(attrs, slog.String("skip_reason", e.SkipReason))
+	}
 	if e.Detail != "" {
 		attrs = append(attrs, slog.String("detail", e.Detail))
 	}
@@ -70,7 +79,10 @@ func levelFor(c channel.ResultClass) slog.Level {
 	switch c {
 	case channel.ClassSent:
 		return slog.LevelInfo
-	case channel.ClassConnectError, channel.ClassTransient:
+	case channel.ClassNotAttempted, channel.ClassConnectError, channel.ClassTransient:
+		// A skipped delivery is a warning rather than a routine line: the
+		// queue is not draining, and on a quiet system that is the first sign
+		// that a channel is out of service or an allowance has run out.
 		return slog.LevelWarn
 	case channel.ClassPermanent:
 		return slog.LevelError

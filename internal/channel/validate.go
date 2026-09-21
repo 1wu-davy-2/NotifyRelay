@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -55,14 +56,22 @@ func checkValue(spec ParamSpec, value any) error {
 		}
 
 	case ParamInt:
-		switch n := value.(type) {
-		case int, int64:
+		var n int
+		switch v := value.(type) {
+		case int:
+			n = v
+		case int64:
+			n = int(v)
 		case float64:
-			if n != float64(int(n)) {
-				return fmt.Errorf("parameter %q: expected a whole number, got %v", spec.Name, n)
+			if v != float64(int(v)) {
+				return fmt.Errorf("parameter %q: expected a whole number, got %v", spec.Name, v)
 			}
+			n = int(v)
 		default:
 			return typeMismatch(spec, value, "an integer")
+		}
+		if err := checkRange(spec, float64(n)); err != nil {
+			return err
 		}
 
 	case ParamBool:
@@ -87,15 +96,28 @@ func checkValue(spec ParamSpec, value any) error {
 		if !ok {
 			return typeMismatch(spec, value, "a duration string such as \"10s\"")
 		}
-		if _, err := time.ParseDuration(s); err != nil {
+		d, err := time.ParseDuration(s)
+		if err != nil {
 			return fmt.Errorf("parameter %q: %w", spec.Name, err)
+		}
+		if d <= 0 {
+			return fmt.Errorf("parameter %q must be greater than zero, got %q", spec.Name, s)
 		}
 
 	case ParamFloat:
-		switch value.(type) {
-		case int, int64, float64:
+		var n float64
+		switch v := value.(type) {
+		case int:
+			n = float64(v)
+		case int64:
+			n = float64(v)
+		case float64:
+			n = v
 		default:
 			return typeMismatch(spec, value, "a number")
+		}
+		if err := checkRange(spec, n); err != nil {
+			return err
 		}
 
 	case ParamStringList:
@@ -122,6 +144,32 @@ func checkValue(spec ParamSpec, value any) error {
 
 func typeMismatch(spec ParamSpec, value any, want string) error {
 	return fmt.Errorf("parameter %q: expected %s, got %T", spec.Name, want, value)
+}
+
+// checkRange applies the bounds the parameter declares.
+//
+// The message names the bound rather than just refusing: "must be at least 1"
+// tells an operator what to write, and "invalid value" makes them read the
+// source.
+func checkRange(spec ParamSpec, n float64) error {
+	if spec.Min != nil && n < *spec.Min {
+		return fmt.Errorf("parameter %q must be at least %s, got %s",
+			spec.Name, formatBound(*spec.Min), formatBound(n))
+	}
+	if spec.Max != nil && n > *spec.Max {
+		return fmt.Errorf("parameter %q must be at most %s, got %s",
+			spec.Name, formatBound(*spec.Max), formatBound(n))
+	}
+	return nil
+}
+
+// formatBound prints a bound without a trailing ".0" on whole numbers, so a
+// port says "65535" rather than "65535.0".
+func formatBound(v float64) string {
+	if v == float64(int64(v)) {
+		return strconv.FormatInt(int64(v), 10)
+	}
+	return strconv.FormatFloat(v, 'g', -1, 64)
 }
 
 func unknownKeys(cfg map[string]any, known map[string]bool) []string {

@@ -64,7 +64,42 @@ func checkSchema(channelType string, specs []ParamSpec) error {
 		default:
 			return fmt.Errorf("channel %q: parameter %q has unknown type %q", channelType, s.Name, s.Type)
 		}
+
+		if s.Min != nil && s.Max != nil && *s.Min > *s.Max {
+			return fmt.Errorf("channel %q: parameter %q declares min %v above max %v",
+				channelType, s.Name, *s.Min, *s.Max)
+		}
+		if (s.Min != nil || s.Max != nil) && s.Type != ParamInt && s.Type != ParamFloat {
+			return fmt.Errorf("channel %q: parameter %q declares min/max but has type %q",
+				channelType, s.Name, s.Type)
+		}
 	}
+
+	// A second pass, because a condition may name a parameter declared later.
+	for _, s := range specs {
+		if s.ShowIf == nil {
+			continue
+		}
+		if s.ShowIf.Field == "" {
+			return fmt.Errorf("channel %q: parameter %q has a ShowIf with no field",
+				channelType, s.Name)
+		}
+		if s.ShowIf.Equals == nil {
+			return fmt.Errorf("channel %q: parameter %q has a ShowIf with no value to match",
+				channelType, s.Name)
+		}
+		if s.ShowIf.Field == s.Name {
+			return fmt.Errorf("channel %q: parameter %q has a ShowIf on itself",
+				channelType, s.Name)
+		}
+		if !seen[s.ShowIf.Field] {
+			// A condition on a name that does not exist hides the field for
+			// every configuration, silently. Nothing downstream would notice.
+			return fmt.Errorf("channel %q: parameter %q has a ShowIf on unknown parameter %q",
+				channelType, s.Name, s.ShowIf.Field)
+		}
+	}
+
 	return nil
 }
 

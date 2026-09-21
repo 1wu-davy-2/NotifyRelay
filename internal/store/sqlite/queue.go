@@ -190,11 +190,11 @@ func (s *Store) finish(
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO attempts
 				(delivery_id, request_id, target, channel_type, attempt_no,
-				 class, detail, error, elapsed_ms, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				 class, detail, error, skip_reason, elapsed_ms, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			attempt.DeliveryID, attempt.RequestID, attempt.Target, attempt.ChannelType,
 			attempt.AttemptNo, attempt.Class, attempt.Detail, attempt.Error,
-			attempt.ElapsedMS, toNanos(attempt.CreatedAt),
+			attempt.SkipReason, attempt.ElapsedMS, toNanos(attempt.CreatedAt),
 		); err != nil {
 			return fmt.Errorf("sqlite: finish %s: record attempt: %w", id, err)
 		}
@@ -236,7 +236,7 @@ func attemptClass(a *store.Attempt) string {
 // audit trail, but the attempt counter is left alone: nothing was delivered
 // and nothing was refused, so charging the message for it would let a
 // downstream outage exhaust every retry budget at once.
-func (s *Store) Release(ctx context.Context, id string, reason string, next time.Time) (bool, error) {
+func (s *Store) Release(ctx context.Context, id string, reason, skipReason string, next time.Time) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, fmt.Errorf("sqlite: release %s: %w", id, err)
@@ -267,13 +267,18 @@ func (s *Store) Release(ctx context.Context, id string, reason string, next time
 	}
 
 	// Recorded for the audit trail, but the attempt counter is untouched.
+	//
+	// skip_reason is what separates the two kinds of release. "No channel
+	// capacity" covers both a channel that is down and an allowance that is
+	// spent, and those call for different actions from whoever is reading the
+	// queue: chase the endpoint, or wait for the window to roll over.
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO attempts
 			(delivery_id, request_id, target, channel_type, attempt_no,
-			 class, detail, error, elapsed_ms, created_at)
-		SELECT id, request_id, target, channel_type, attempts, ?, ?, ?, 0, ?
+			 class, detail, error, skip_reason, elapsed_ms, created_at)
+		SELECT id, request_id, target, channel_type, attempts, ?, ?, ?, ?, 0, ?
 		FROM deliveries WHERE id = ?`,
-		string(classReleased), reason, reason, toNanos(now), id,
+		string(classReleased), reason, reason, skipReason, toNanos(now), id,
 	); err != nil {
 		return false, fmt.Errorf("sqlite: release %s: record: %w", id, err)
 	}

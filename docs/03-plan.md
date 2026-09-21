@@ -538,6 +538,247 @@
 
 ---
 
+## 进 M5 之前的补齐（2026-09-21）
+
+M4 验收通过后、M5 开工前做的一轮：`skip_reason`、ParamSchema 审计、以及审计过程中
+发现的三个缺陷。审计全文见 [`05-paramschema-audit.md`](05-paramschema-audit.md)。
+
+### 1 · `skip_reason`：把"没尝试"变成 API 可见
+
+**问题**：配额拒绝、熔断拒绝、限流放弃，三者都返回 `CONNECT_ERROR`。这个分类是**对的**——
+队列据此归还而非记一次尝试。但 `CONNECT_ERROR` 在 SMTP-Switch 的定义里是"没能碰到对端"，
+而配额拒绝**根本没尝试**。同一分类在语义上是混淆的。
+
+**这一轮不改 `ResultClass`**（改了会动到队列的重试语义），而是补一个正交的字段：
+
+| 值 | 含义 |
+|---|---|
+| `breaker_open` | 通道已知不健康 |
+| `quota_exhausted` | 窗口额度用尽 |
+| `rate_limited` | 等不到限流令牌 |
+
+**不变式（写进代码注释）**：`skip_reason` 出现 ⟺ 通道**没有被调用**。
+一个正文被切成两段、第一段发出去了第二段被配额挡下的投递，**不报 skip_reason**——
+通道确实收到了消息，报这个词会误导。
+
+出口三处：`/api/v1/notify` 同步响应的 `skip_reason`、审计日志的 `skip_reason=`
+（`internal/audit/audit.go`）、`attempts` 表的 `skip_reason` 列（经 `/api/v1/messages/{id}` 暴露）。
+存储列是**本项目的第一个 schema 迁移**：`CREATE TABLE IF NOT EXISTS` 对已存在的表不生效，
+所以 `sqlite.addColumns()` 用 `PRAGMA table_info` 判断后 `ALTER TABLE ADD COLUMN`，只增不删。
+
+实测（同步响应，熔断阈值 5）：
+
+```console
+delivery 1..4: status=connect_error skip_reason=-
+delivery 5..7: status=connect_error skip_reason=breaker_open
+```
+
+实测（异步投递的审计记录）：
+
+```json
+{"attempt_no": 0, "class": "RELEASED", "detail": "no channel capacity",
+ "skip_reason": "breaker_open"}
+```
+
+实测（配额，`per_second: 1`）：
+
+```console
+call 3: status=connect_error skip_reason=quota_exhausted
+        detail=channel "hook" has used its second allowance of 1
+```
+
+**留给 M5 的一条**：`rate_limited` 目前返回 `TRANSIENT`（会消耗一次重试），
+而 `quota_exhausted` 返回 `CONNECT_ERROR`（不消耗）。两者都是"通道没被调用"。
+这一轮按"不改 ResultClass"的要求原样保留，但**这是一处应当对齐的不一致**，
+M5 之前需要单独决策。
+
+### 2 · 审计发现的三个缺陷
+
+| # | 缺陷 | 严重程度 | 修复 |
+|---|---|---|---|
+| 1 | **凭据经 URL 泄漏**：`net/http` 的 `*url.Error` 会渲染整个 URL，而钉钉/飞书把 token 放 query、Slack 把 secret 放 path。私密参数的值出现在 `/api/v1/notify` 响应和审计日志里 | 高（`Private` 的承诺是假的） | `httpx.endpointLabel/redactEndpoint` 只保留 `scheme://host`；`ClassifyError` 签名加必需的 `endpoint` 参数，编译期防止新调用方遗忘 |
+| 2 | **`Private` 在投递路径上无人兑现** | 高 | `channel.SecretValues()` 从 `ParamSchema` 派生私密值清单，`Router.finish()`（Deliver 的唯一出口）统一擦除 `Error`/`Detail` |
+| 3 | **半开探针槽位泄漏**：`Allow` 取走槽位，被配额/限流挡下时无人归还。`half_open_probes: 1` 时熔断器**永久卡在半开，拒绝每一条投递，直到进程重启** | 高 | `Breaker.Abandon()`；Router 用 `defer` 结算，保证"要么汇报结果、要么归还槽位"在**每条返回路径**上都成立 |
+
+第 3 条不在本轮任务范围内，是核对"半开探针"边界时顺带发现的。
+它的失效方式值得记一笔：**分类上看不出来**——槽位卡死和熔断器真的开着都报 `CONNECT_ERROR`。
+这正是 `skip_reason` 存在的理由，两件事在同一轮里互相印证。
+
+第 3 条的测试用**变异测试**验证过有效性：把 `Abandon` 临时改成空实现，测试变红并报
+`the half-open probe slot was never returned`；恢复后转绿。
+
+### 3 · 两个边界的确认
+
+**Q：`open_timeout` 到期后是"进半开、只放 N 个探针"，还是"直接转 closed"？**
+
+**进半开并限流探针**，不是转 closed。若直接转 closed，等于熔断器每 60 秒自动放弃一次，
+等于没有熔断——积压会在每个周期末尾整批涌向一个还没恢复的下游。
+
+- 实现：`internal/breaker/breaker.go:159-165`，`Allow()` 的 `case StateOpen`——
+  未到期直接拒绝，到期则 `transition(ctx, StateHalfOpen, now)`，
+  之后落进 `case StateHalfOpen` 检查 `probes >= HalfOpenProbes`（`:167`）。
+- 证据：`TestBreaker_OpensThenProbesAfterTheTimeout`（未到期拒绝 / 到期放行）、
+  `TestBreaker_HalfOpenAdmitsOnlyTheConfiguredProbes`（N=2 时第三个被拒，成功一个才释放名额）。
+
+**Q：半开期的 N 个探针里有一个失败，是立刻回 open，还是等全部 N 个完成？**
+
+**立刻回 open**，不等其余探针。理由是**证据的时效性**：其余探针是**并发发出的**，
+它们的成功记录的是"发起那一刻通道还行"，而被判定失败的那次是更近的坏消息。
+等全部完成会把最旧的证据当成最新的用。
+
+- 实现：`internal/breaker/breaker.go:244-255`，`recordFailure()` 的 `case StateHalfOpen`
+  直接 `transition(ctx, StateOpen, now)`——不等 `probes` 归零。
+  `transition` 同时把 `probes` 清零，并把 `openedAt` 重置为**失败探针的时刻**，
+  于是下一轮 `open_timeout` 从这次失败重新计时。
+- 证据：`TestBreaker_AFailedProbeReopens`（失败即回 open，且下一次探测按新的 `open_timeout` 计时）。
+- 推论也有测试：`recordSuccess` 在 `StateOpen` 下**没有分支**——
+  已经放出去的兄弟探针即使成功返回，也**无法把一个刚被失败重新打开的熔断器关回去**。
+  见 `TestBreaker_ALateProbeSuccessCannotReclose`。
+
+**N 的选择**：配置项 `half_open_probes`，默认 1。取 1 时上面的语义最强——
+一次失败就是最终结论；取大值是在"更快发现恢复"和"恢复期承受更多流量"之间换。
+
+### 4 · Q11：`ParamSpec` 补 `ShowIf` 与 `Min`/`Max`
+
+审计（`05-paramschema-audit.md` §4）发现 schema **表达不了字段联动、互斥与数值范围**，
+6 个通道里有 9 处联动、5 处范围。按 **(a) 补 schema 后生成表单** 处理。
+
+**新增声明**（`internal/channel/channel.go`）
+
+```go
+// 只做等值。条件语言需要求值器、两份实现（服务端与表单）以及它们不一致时的说法，
+// 而本项目的每一种情况都是"某字段为该值时此项适用"。
+type Condition struct {
+	Field  string `json:"field"`
+	Equals any    `json:"equals"`
+}
+
+// Min/Max 是包含边界的指针，nil 表示不限。只作用于 ParamInt / ParamFloat。
+```
+
+**联动落在两处**（共 14 个参数）：
+
+| 通道 | 条件 | 字段 |
+|---|---|---|
+| `webhook` | `auth_type = bearer` | `token` |
+| `webhook` | `auth_type = basic` | `username`、`password` |
+| `webhook` | `auth_type = header` | `header_name`、`header_value` |
+| `webhook` | `auth_type = hmac` | `secret`、`signature_header`、`signature_prefix`、`signature_base64` |
+| `wecom` | `mode = webhook` | `webhook_url` |
+| `wecom` | `mode = app` | `corp_id`、`corp_secret`、`agent_id`、`to_user`、`to_party` |
+
+`webhook` 那 9 个声明在 `httpauth.ParamSpecs()` 里，所有能认证的通道共用一份。
+
+**范围**：`email.port` 1–65535、`webhook.body_max_len`/`title_max_len` ≥ 0、
+各通道 `rate_per_sec` ≥ 0。**这些数字现在只有一份**：`parseConfig` 通过
+`channel.IntParamBounded(raw, paramSchema(), "port", 587)` 读它，`ValidateParams` 用它校验，
+`/api/v1/channels` 把它发给表单。
+
+`agent_id` 是**例外**，没有声明 `Min`：它的"必须为正"只在 app 模式成立，
+而边界不是条件性的——声明 `Min: 1` 会把 webhook 模式下合法的缺省 0 也拒掉。
+校验留在 `parseConfig` 里紧挨着 `mode` 判断的那一行，schema 上只声明可见性。
+
+**时长的正数约束上移到类型**。原先 6 个通道各自写 `timeout <= 0` 检查；现在
+`DurationParamOr` 与 `checkValue` 都拒绝非正数——本项目里每个 duration 都是超时，
+"等零秒"不是更短的超时，是没填。
+
+**顺带修掉审计 §3.3 的边界情况**：`webhook.url` 改为 `Private`。
+通用 webhook 的 URL 经常**就是**凭据（Slack 式的 `/services/T00/B00/xxx` 路径），
+而它此前没标私密，所以解析失败时会把整个 URL 回显出来。同时
+`webhook/config.go` 的 URL 解析错误不再带值（`parseReason` 只取原因）。
+至此 `allowedPublic` 白名单是**空的**——64 个参数里没有一个是"长得像凭据但其实不是"。
+
+**注册期自检**（`registry.go` `checkSchema`）新增：`ShowIf` 必须指向已声明的参数、
+不能指向自己、`Equals` 不能为 nil；`Min`/`Max` 不能倒置、不能声明在非数值类型上。
+`ShowIf` 指向一个不存在的字段会让该字段在**所有**配置下隐藏，且没有任何下游会察觉——
+这类错误必须在注册时炸掉。
+
+#### 两个测试
+
+1. **范围来自 schema**（`email/config_test.go`）——`parseConfig` 拒绝 port 70000；
+   把 schema 的 `Max` 放宽到 99999 后，**同一份配置变为合法**；把 `Min` 抬到 1024 后，
+   587 被拒绝。若边界是 `parseConfig` 里的第二份拷贝，这两步都不会动。
+2. **凭据必须标 `Private`**（`channel/all/schema_test.go`）——遍历**所有已注册通道**的
+   `ParamSchema`，按名字规则（含 `password`/`secret`/`token`/`credential`/`api_key`，
+   以及 `url`/`webhook_url`/`header_value`）判定"这是一个凭据"，未标 `Private` 且不在
+   显式白名单里即 fail；同时断言规则至少匹配到 10 个参数，避免规则失效后测试空转。
+
+   漏标的后果是**没有任何报错**：服务正常启动、正常投递，只是每次失败都把 token 写进日志。
+   测试套件里别的地方看不见它，所以这条覆盖全部通道。
+
+   已用**变异测试**验证：临时去掉 `webhook.url` 的 `Private: true`，测试报
+   `webhook.url carries a credential but is not declared Private`；恢复后转绿。
+
+同一文件另有三条：`ShowIf` 的 condition 指向真实参数、
+预期的 8 处联动声明仍在（防止有人默默删掉）、声明的边界可用且默认值落在边界内。
+
+**代价**：`ShowIf` 只做等值，**互斥表达不了**。`slack` 的 `webhook_url` ✗ `token`、
+`email` 的 `username` ⟺ `password`、`wecom` 的 `to_user` ✗ `to_party` 仍由 `parseConfig`
+校验，M5 的表单需要为这三处手写少量联动，或后续补 `AtLeastOneOf` 声明。
+
+### 5 · Q12：`ClassNotAttempted`
+
+上一轮把"没尝试"的原因做成了 `skip_reason`，但分类仍然是 `CONNECT_ERROR`——
+`CONNECT_ERROR` 的定义是"没能碰到对端"，而配额拒绝根本没碰。约定里写明
+"有 `skip_reason` ⟺ 未被调用"，但类型系统并不保证它。
+
+**枚举新增 `ClassNotAttempted`，插在最前（值 0）**：
+
+```
+ClassNotAttempted < ClassSent < ClassConnectError < ClassTransient < ClassPermanent
+```
+
+放在最低位是有原因的：`combine()` 取最大值来折叠分片投递的结果，而"未尝试"**不携带任何结果**，
+与真实结果折叠时必须让位。否则一条正文被切成两段、第一段已送达、第二段被配额挡下的投递，
+会被报成"从未尝试"。
+
+它同时**是零值**。一个未赋值的分类因此表示"我们没试"，失败方向是让队列等待，
+而不是冒充成功——原先零值是 `ClassSent`，这是更危险的一侧。
+
+**三处拒绝统一**（`router.go`）：熔断 → `NotAttempted(err, "channel is not accepting deliveries")`、
+配额 → `NotAttempted(err, why)`、限流 → `NotAttempted(err, ...)`，各自同时写 `skip_reason`。
+
+**队列行为**：
+
+| 分类 | 处理 | attempts |
+|---|---|---|
+| `SENT` | 完成 | — |
+| `PERMANENT` | 立即死信 | — |
+| `TRANSIENT` | 退避重试 | **+1** |
+| `CONNECT_ERROR` / `NOT_ATTEMPTED` | 归还队列等待 | **0** |
+| 未知分类 | 归还 + `Log.Error` | 0 |
+
+**唯一的行为变化**：`rate_limited` 原本返回 `TRANSIENT`（消耗一次重试），现在不消耗。
+这正是上一轮标记的那处不一致——两个都是"通道没被调用"，理应一致。
+
+**连带修掉的一个隐患**：`smtpin` 的回复码 switch 用 `default` 兜"永久失败"。
+若不显式加 `ClassNotAttempted`，熔断/配额的拒绝会从 451（让发信方重投）
+变成 550（直接把邮件退回去）——**恰恰在系统最需要兜住这条通知的时候把它销毁**。
+已加入可重试分支，并补测试钉住五种分类各自的回复码。
+
+**不变式**（写进 `result.go` 与 `router.go` 的注释）：
+`skip_reason` 存在 ⟺ `class == ClassNotAttempted`。为了让它对**任何**通道实现都成立，
+路由对"通道自己返回 `NotAttempted`"做了归一化——通道刚跑完就声称没跑是自相矛盾，
+按 `CONNECT_ERROR` 处理。
+
+### 6 · 本轮验收
+
+| # | 项 | 结果 |
+|---|---|---|
+| 1 | `skip_reason` 三类都出现，且仅在未被调用时 | ✅ 三类各有单测；`breaker_open` / `quota_exhausted` 另有实测 |
+| 2 | `skip_reason` 进审计记录与 API 响应 | ✅ 同步响应、审计日志、`attempts` 表三处实测确认 |
+| 3 | `Private` 承诺在投递路径兑现 | ✅ 实测 `grep -c SUPERSECRET…` 从 1 → 0，主机名保留；`webhook.url` 一并纳入 |
+| 4 | 半开探针槽位不泄漏 | ✅ 变异测试验证 |
+| 5 | 老库能升级（新增列） | ✅ `TestOpen_AddsColumnsToAnExistingDatabase`、`TestOpen_MigrationIsIdempotent` |
+| 6 | 三类拒绝返回 `NOT_ATTEMPTED` | ✅ 三类各一条，同时断言 `class`、`skip_reason` 与 `status` |
+| 7 | `skip_reason` ⟺ `NOT_ATTEMPTED` | ✅ `TestDeliver_SkipReasonAndClassAgree`；反例 `TestDeliver_PartiallySentDeliveryIsNotSkipped` |
+| 8 | 范围校验来自 `ParamSpec` | ✅ 改 schema → 校验行为跟着变（email port） |
+| 9 | 凭据漏标 `Private` 会被测出 | ✅ 全通道遍历 + 变异测试验证 |
+| 10 | SMTP 回复码不因新分类退化 | ✅ 5 种分类各自的 451/550/接受 |
+| 11 | **M4 已通过的 10 条不回退** | ✅ `go test ./...` 全绿（18 个包） |
+
+---
+
 ## M5 · 管理后台 / 部署
 
 **目标：从"能跑"变成"可运维、可自助"。**
@@ -554,7 +795,34 @@
   - [ ] 渠道配置的增删改查 + **连通性测试按钮**（调 `Channel.Test()`）
   - [ ] 投递记录查询（按时间/通道/状态/关键字筛选）
   - [ ] 死信查看与手动重放
+  - [ ] **手动重置通道熔断器**（见下方说明）
   - [ ] **不要硬编码 `debug` 开关**（NotifyHub 的教训）
+
+#### 为什么"手动重置熔断器"是必需项
+
+熔断器的状态**故意落库且重启不忘**（`breakers` 表，M4 验收 6b）。这在故障期间是对的：
+重启往往就是事故的一部分，让进程一重启就把积压灌进还没恢复的下游，是把一次故障变成两次。
+
+但它同时意味着**恢复路径上有一个只能靠等待穿过的环节**：下游恢复了、或者运维重启了对端，
+服务这边仍然要等满 `open_timeout` 才会放第一个探针，然后还要攒够 `success_threshold`
+次成功才真正转 closed。生产配置里这是 60 秒 + 2 次，看起来不长；但如果阈值被调高
+（通道不稳定时运维会那么做），等待就是分钟级的，而**下游早就好了**。
+
+没有这个按钮，唯一的加速手段是重启服务——而重启恰恰要等重新加载、重建队列，
+并且丢掉内存里的滑动窗口配额计数。**用重启来解决"我想让它立刻重试"是错的工具**，
+所以这个功能不是锦上添花，是故障恢复路径的必要一环。
+
+实现要求：
+
+- 重置 = 把该通道的 breaker 置为 `closed`、`failures = 0`、`opened_at` 清零，**并写穿到 `breakers` 表**
+  （只改内存的话，下一次 `load()` 会把旧状态读回来——`load` 每个 breaker 只跑一次，
+  但进程重启后又是一条好汉般地"忘掉"这次重置）。
+- 记审计：谁在什么时候重置了哪个通道。这是**人为把一个自动保护措施关掉**的动作，
+  事后必须能查到。
+- 重置**不清空队列、不重置配额计数**。它只回答"再试一次"，
+  不回答"把今天已经发出去的额度还回来"。两件事混在一起会让配额失去意义。
+- 半开期的探针名额一并清零（`probes = 0`），否则重置后如果还卡在旧名额上，
+  按下按钮看起来什么都没发生。
 - [ ] **配置热加载**：改配置不重启（SIGHUP 或文件 watch）
 - [ ] **部署产物**
   - [ ] Docker 镜像（多阶段、非 root、静态二进制）
@@ -573,9 +841,14 @@
 4. 加密密钥与登录 token 签名密钥**不是同一个**（代码评审确认）。
 5. 投递记录页能查到 M4 产生的全部审计数据，筛选与分页正常。
 6. 死信可手动重放并成功投递。
-7. `docker compose up` 一条命令起服务；`helm install` 可在 k8s 集群部署成功。
-8. 配置文件热加载：修改重试次数后发 SIGHUP，新配置生效且**不中断正在进行的投递**。
-9. 一个**全新的人**按 README 能在 15 分钟内完成部署并发出一条通知（找真人验证）。
+7. **通道被熔断后，在后台点"重置熔断器"，下一条投递立刻被当作探针放行**，
+   不必等满 `open_timeout`；且**重启服务后该通道仍然是 closed**（重置写穿了 `breakers` 表）。
+8. `docker compose up` 一条命令起服务；`helm install` 可在 k8s 集群部署成功。
+9. 配置文件热加载：修改重试次数后发 SIGHUP，新配置生效且**不中断正在进行的投递**。
+10. 一个**全新的人**按 README 能在 15 分钟内完成部署并发出一条通知（找真人验证）。
+11. 通道参数表单的联动与互斥**正确**：`webhook` 选 `auth_type=hmac` 时只有 `secret` 被标为必填，
+    选 `basic` 时是 `username`/`password`；`wecom` 选 `mode=app` 时 `webhook_url` 不再出现。
+    （这一条取决于 `docs/05-paramschema-audit.md` §5 的方案选择）
 
 ### 风险点
 
@@ -583,7 +856,7 @@
 |---|---|---|
 | **后台成为攻击面** | 内部服务被入侵 | 最小登录实现 + 默认只监听内网 + 密钥加密存储 + 不用默认密码 |
 | 配置双份真相（文件 + DB） | 行为不一致 | **DB 是唯一真相**；文件只在未启用 DB 时生效；迁移后文件仅存全局设置 |
-| 前端表单手写 | 加通道要改前端 | 表单**必须由 `ParamSchema` 生成**，这是 M2 就定好的架构红利 |
+| 前端表单手写 | 加通道要改前端 | 表单**必须由 `ParamSchema` 生成**，这是 M2 就定好的架构红利。⚠️ 但 audit（`docs/05-paramschema-audit.md`）发现现有 schema **表达不了字段联动与互斥**，6 个通道里有 9 处——生成之前要先补 `ShowIf`/`Group`，否则生成出"填了就起不来"的表单 |
 | 热加载导致状态不一致 | 并发问题 | 热加载只重建通道实例，队列与正在进行的投递不受影响 |
 | DB 迁移出错 | 数据丢失 | Alembic/goose 类工具 + 升级前自动备份 |
 
@@ -637,4 +910,17 @@ M0 ──> M1 ──> M2 ──> M3
 
 | # | 决策点 | 说明 |
 |---|---|---|
-| **Q10** | 项目自身用什么 License？ | 影响 M0 的 `LICENSE` 文件。若是纯内部项目不对外分发，可暂缓；但 `NOTICE` 里的第三方署名**无论选什么 License 都要保留** |
+| **Q10** | 项目自身用什么 License？ | **已定：AGPL-3.0**（`LICENSE` 已建，`NOTICE` 已建） |
+| **Q11** | `ParamSpec` 是否补字段？ | **已决（2026-09-21）：选 (a)，补 `ShowIf` 与 `Min`/`Max` 后生成表单。** 见下方「进 M5 之前的补齐」§4。`Group` / `Example` / `SecretFromEnv` 本次未补，见 `05-paramschema-audit.md` §4 的剩余清单 |
+| **Q12** | `rate_limited` 是否也改为不消耗重试预算？ | **已决（2026-09-21）：是。** 三类拒绝统一为 `ClassNotAttempted`，队列一律归还且不消耗 attempts。见下方 §5 |
+
+### 待确认（非阻塞）· 已清空
+
+原 Q10/Q11/Q12 均已决。M5 开工前无遗留决策。
+
+### 本轮之后仍需注意的两处
+
+| 项 | 说明 |
+|---|---|
+| **互斥无法用 `ShowIf` 表达** | `ShowIf` 只做等值判断，表达不了"`webhook_url` 与 `token` 二选一"或"`username` 非空则 `password` 必填"。这些校验仍在 `parseConfig` 里（`slack/config.go`、`email/config.go`、`wecom/config.go`）。M5 的表单需要为它们手写一小段联动，或后续再补一个 `AtLeastOneOf` / `RequiredWith` 声明。见 `05-paramschema-audit.md` §4.2 |
+| **`agent_id` 的范围是条件性的** | "app 模式下必须为正"不是一条范围，而是随 `mode` 变化的规则，`Min` 表达不了（声明 `Min: 1` 会把 webhook 模式下合法的缺省 0 也拒掉）。校验留在 `parseConfig` 里，紧挨着判断 `mode` 的那行。schema 上只声明了 `ShowIf`（可见性） |

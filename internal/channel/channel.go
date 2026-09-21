@@ -42,11 +42,52 @@ type ParamSpec struct {
 	Required bool      `json:"required"`
 	// Private marks secrets. Values of private params are masked in logs and
 	// omitted from /api/v1/channels output. Never log a private value.
+	//
+	// This is not decoration: router.SecretValues reads the private params out
+	// of this schema and redacts their configured values from everything the
+	// router emits. Declaring a parameter private is what protects it.
 	Private bool   `json:"private"`
 	Default any    `json:"default,omitempty"`
 	Values  []string `json:"values,omitempty"` // allowed values when Type is ParamEnum
 	Label   string `json:"label,omitempty"`    // human label for the operator form
 	Desc    string `json:"desc,omitempty"`
+
+	// ShowIf declares that this parameter only applies when another parameter
+	// has one of a small set of values, and that it is required when it does.
+	//
+	// It exists because Required alone cannot express the shapes channels
+	// actually have. A webhook's `token` is required when auth_type is bearer,
+	// irrelevant otherwise, and `Required: false` says both things at once — so
+	// a generated form marks nothing as required and an operator discovers the
+	// mistake only when the service refuses to start.
+	//
+	// Equality only, deliberately. A condition language would need an
+	// evaluator, two implementations of it (server and form) and a story for
+	// what happens when they disagree; every case in this codebase is "this
+	// field applies when that enum has this value".
+	ShowIf *Condition `json:"show_if,omitempty"`
+
+	// Min and Max bound a numeric parameter. Inclusive, and nil means
+	// unbounded. They apply to ParamInt and ParamFloat.
+	//
+	// Declared here rather than checked in the channel's own parser so that
+	// the bound has one home: the parser reads it from the schema, validation
+	// enforces it from the schema, and the operator form shows it — instead of
+	// the parser enforcing a number no form knows about.
+	//
+	// ParamDuration is not bounded here; see ParamDuration for why.
+	Min *float64 `json:"min,omitempty"`
+	Max *float64 `json:"max,omitempty"`
+}
+
+// Condition is a ShowIf test: the parameter applies when the value configured
+// for Field equals Equals.
+//
+// Equals is an `any` because the field it compares against may be an enum (the
+// common case), a string or a boolean.
+type Condition struct {
+	Field  string `json:"field"`
+	Equals any    `json:"equals"`
 }
 
 // OverflowMode declares what the core should do when a message exceeds a

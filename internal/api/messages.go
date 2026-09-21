@@ -43,14 +43,16 @@ type deliveryView struct {
 }
 
 type attemptView struct {
-	AttemptNo  int       `json:"attempt_no"`
-	Class      string    `json:"class"`
-	Detail     string    `json:"detail,omitempty"`
-	Error      string    `json:"error,omitempty"`
-	ElapsedMS  int64     `json:"elapsed_ms"`
-	CreatedAt  time.Time `json:"created_at"`
-	ChannelType string   `json:"channel_type"`
-	Target     string    `json:"target"`
+	AttemptNo int    `json:"attempt_no"`
+	Class     string `json:"class"`
+	Detail    string `json:"detail,omitempty"`
+	Error     string `json:"error,omitempty"`
+	// SkipReason is present only when the channel was never called.
+	SkipReason  string    `json:"skip_reason,omitempty"`
+	ElapsedMS   int64     `json:"elapsed_ms"`
+	CreatedAt   time.Time `json:"created_at"`
+	ChannelType string    `json:"channel_type"`
+	Target      string    `json:"target"`
 }
 
 type messageDetail struct {
@@ -77,7 +79,8 @@ func viewAttempts(attempts []*store.Attempt) []attemptView {
 	for _, a := range attempts {
 		out = append(out, attemptView{
 			AttemptNo: a.AttemptNo, Class: a.Class, Detail: a.Detail, Error: a.Error,
-			ElapsedMS: a.ElapsedMS, CreatedAt: a.CreatedAt,
+			SkipReason: a.SkipReason,
+			ElapsedMS:  a.ElapsedMS, CreatedAt: a.CreatedAt,
 			ChannelType: a.ChannelType, Target: a.Target,
 		})
 	}

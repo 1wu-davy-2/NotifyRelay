@@ -1,6 +1,7 @@
 package webhook
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -35,7 +36,27 @@ type Config struct {
 	Auth httpauth.Params
 }
 
+// parseConfig reads the configuration against the schema.
+//
+// specs is a parameter rather than a call to paramSchema() so that a test can
+// hand it a modified schema and watch the bounds move — which is the only way
+// to show that the numbers in the schema are the ones being enforced, rather
+// than a second copy that happens to agree today.
 func parseConfig(raw map[string]any) (Config, error) {
+	return parseConfigWith(raw, paramSchema())
+}
+
+// parseReason strips the offending value from a url.Parse error, which renders
+// as `parse "https://...": <reason>`.
+func parseReason(err error) string {
+	var uerr *url.Error
+	if errors.As(err, &uerr) {
+		return uerr.Err.Error()
+	}
+	return err.Error()
+}
+
+func parseConfigWith(raw map[string]any, specs []channel.ParamSpec) (Config, error) {
 	var cfg Config
 	var err error
 
@@ -44,13 +65,17 @@ func parseConfig(raw map[string]any) (Config, error) {
 	}
 	parsed, err := url.Parse(cfg.URL)
 	if err != nil {
-		return cfg, fmt.Errorf("parameter \"url\": %w", err)
+		// The parser's own error quotes the whole URL, and `url` is declared
+		// private because a webhook endpoint frequently carries its token in
+		// the path or the query. Report the shape of the problem without the
+		// value.
+		return cfg, fmt.Errorf("parameter \"url\" is not a usable URL: %s", parseReason(err))
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return cfg, fmt.Errorf("parameter \"url\": scheme must be http or https, got %q", parsed.Scheme)
 	}
 	if parsed.Host == "" {
-		return cfg, fmt.Errorf("parameter \"url\": no host in %q", cfg.URL)
+		return cfg, fmt.Errorf("parameter \"url\" has no host")
 	}
 
 	if cfg.Method, err = channel.StringParamOr(raw, "method", "POST"); err != nil {
@@ -69,25 +94,18 @@ func parseConfig(raw map[string]any) (Config, error) {
 		return cfg, err
 	}
 
+	// The bounds live in the schema; these readers apply them. A negative
+	// length or rate is refused by the declaration, not by a copy of it here.
 	if cfg.Timeout, err = channel.DurationParamOr(raw, "timeout", defaultTimeout); err != nil {
 		return cfg, err
 	}
-	if cfg.Timeout <= 0 {
-		return cfg, fmt.Errorf("parameter \"timeout\" must be greater than zero")
-	}
 
-	if cfg.BodyMaxLen, err = channel.IntParamOr(raw, "body_max_len", 0); err != nil {
+	if cfg.BodyMaxLen, err = channel.IntParamBounded(raw, specs, "body_max_len", 0); err != nil {
 		return cfg, err
 	}
-	if cfg.BodyMaxLen < 0 {
-		return cfg, fmt.Errorf("parameter \"body_max_len\" must not be negative")
-	}
 
-	if cfg.TitleMaxLen, err = channel.IntParamOr(raw, "title_max_len", 0); err != nil {
+	if cfg.TitleMaxLen, err = channel.IntParamBounded(raw, specs, "title_max_len", 0); err != nil {
 		return cfg, err
-	}
-	if cfg.TitleMaxLen < 0 {
-		return cfg, fmt.Errorf("parameter \"title_max_len\" must not be negative")
 	}
 
 	overflowMode, err := channel.StringParamOr(raw, "overflow_mode", "error")
@@ -98,11 +116,8 @@ func parseConfig(raw map[string]any) (Config, error) {
 		return cfg, err
 	}
 
-	if cfg.RatePerSec, err = channel.FloatParamOr(raw, "rate_per_sec", defaultRateLimit); err != nil {
+	if cfg.RatePerSec, err = channel.FloatParamBounded(raw, specs, "rate_per_sec", defaultRateLimit); err != nil {
 		return cfg, err
-	}
-	if cfg.RatePerSec < 0 {
-		return cfg, fmt.Errorf("parameter \"rate_per_sec\" must not be negative")
 	}
 
 	if cfg.CAFile, err = channel.StringParamOr(raw, "ca_file", ""); err != nil {
@@ -168,10 +183,17 @@ func parseOverflowMode(s string) (channel.OverflowMode, error) {
 }
 
 func paramSchema() []channel.ParamSpec {
+	zero := 0.0
+
 	specs := []channel.ParamSpec{
 		{
-			Name: "url", Type: channel.ParamString, Required: true,
-			Label: "Endpoint URL", Desc: "Where the JSON payload is posted.",
+			// Private because a webhook endpoint frequently carries its token
+			// in the path — that is the shape Slack and most SaaS webhooks
+			// use, and it is the more common case than a bare URL. Declaring
+			// it private is what puts it in the redaction list, so a delivery
+			// failure quoting the endpoint cannot publish the credential.
+			Name: "url", Type: channel.ParamString, Required: true, Private: true,
+			Label: "Endpoint URL", Desc: "Where the JSON payload is posted. Often carries a token; write as `!env ...`.",
 		},
 		{
 			Name: "method", Type: channel.ParamEnum, Values: []string{"POST", "PUT"}, Default: "POST",
@@ -191,11 +213,11 @@ func paramSchema() []channel.ParamSpec {
 			Label: "Request timeout",
 		},
 		{
-			Name: "body_max_len", Type: channel.ParamInt, Default: 0,
+			Name: "body_max_len", Type: channel.ParamInt, Default: 0, Min: &zero,
 			Label: "Body limit", Desc: "Characters. 0 means no limit.",
 		},
 		{
-			Name: "title_max_len", Type: channel.ParamInt, Default: 0,
+			Name: "title_max_len", Type: channel.ParamInt, Default: 0, Min: &zero,
 			Label: "Title limit", Desc: "Characters. 0 means no limit.",
 		},
 		{
@@ -204,7 +226,7 @@ func paramSchema() []channel.ParamSpec {
 			Label: "Overflow behaviour", Desc: "What to do when the body exceeds body_max_len.",
 		},
 		{
-			Name: "rate_per_sec", Type: channel.ParamFloat, Default: 0,
+			Name: "rate_per_sec", Type: channel.ParamFloat, Default: 0, Min: &zero,
 			Label: "Rate limit", Desc: "Messages per second. 0 means unlimited.",
 		},
 	}

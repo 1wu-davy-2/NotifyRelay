@@ -75,8 +75,18 @@ type Attempt struct {
 	Class       string // SENT | CONNECT_ERROR | TRANSIENT | PERMANENT | RELEASED
 	Detail      string
 	Error       string
-	ElapsedMS   int64
-	CreatedAt   time.Time
+	// SkipReason names why the channel was never called: breaker_open,
+	// quota_exhausted or rate_limited. Empty for an attempt that reached the
+	// channel.
+	//
+	// It is stored rather than folded into Detail because the class cannot
+	// carry the distinction — a skipped delivery and an unreachable one are
+	// both CONNECT_ERROR — and an operator reading the trail has to be able to
+	// tell "the channel is down" from "the budget ran out" without parsing
+	// prose.
+	SkipReason string
+	ElapsedMS  int64
+	CreatedAt  time.Time
 }
 
 // Record is a stored response for an idempotency key.
@@ -144,10 +154,15 @@ type Queue interface {
 	// charging it an attempt would let a downstream outage burn through every
 	// message's retry budget and dump the lot into the dead-letter queue.
 	//
+	// skipReason names what had no capacity — breaker_open, quota_exhausted,
+	// rate_limited — and is empty when the channel was called and could not be
+	// reached. The two cases release identically but mean different things to
+	// whoever is looking at the queue.
+	//
 	// next is when to try again. Releasing as immediately due would spin: the
 	// channel is still down, so every attempt returns the same answer as fast
 	// as the worker can ask.
-	Release(ctx context.Context, id string, reason string, next time.Time) (bool, error)
+	Release(ctx context.Context, id string, reason, skipReason string, next time.Time) (bool, error)
 
 	// RecoverOrphans returns deliveries whose claim has expired back to the
 	// queue, and reports how many it moved.

@@ -9,7 +9,7 @@ import (
 )
 
 const attemptColumns = `id, delivery_id, request_id, target, channel_type,
-	attempt_no, class, detail, error, elapsed_ms, created_at`
+	attempt_no, class, detail, error, skip_reason, elapsed_ms, created_at`
 
 // Attempts implements store.Audit.
 func (s *Store) Attempts(ctx context.Context, deliveryID string) ([]*store.Attempt, error) {
@@ -72,7 +72,8 @@ func scanAttempts(rows interface {
 		)
 		if err := rows.Scan(
 			&a.ID, &a.DeliveryID, &a.RequestID, &a.Target, &a.ChannelType,
-			&a.AttemptNo, &a.Class, &a.Detail, &a.Error, &a.ElapsedMS, &createdAt,
+			&a.AttemptNo, &a.Class, &a.Detail, &a.Error, &a.SkipReason,
+			&a.ElapsedMS, &createdAt,
 		); err != nil {
 			return nil, err
 		}

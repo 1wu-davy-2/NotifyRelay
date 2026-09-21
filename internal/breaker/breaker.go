@@ -176,6 +176,31 @@ func (b *Breaker) Allow(ctx context.Context, now time.Time) (bool, string) {
 	return true, ""
 }
 
+// Abandon gives back a half-open probe slot for a delivery that was admitted
+// and then never reached the channel.
+//
+// Allow takes a slot when it admits a probe, and Record gives it back when the
+// delivery reports an outcome. A delivery blocked after the admission — by a
+// spent allowance or by a rate limit — has no outcome to report, so without
+// this its slot stays taken. With half_open_probes: 1 the breaker then admits
+// nothing ever again: every later delivery is refused as "channel is being
+// probed", and a channel that recovered long ago stays out of service until the
+// process restarts.
+//
+// The slot is genuinely free when this is called: a slot counts a probe that is
+// in flight, and this one is not in flight, it is not going to be. Handing it
+// back does not over-admit.
+func (b *Breaker) Abandon(ctx context.Context, now time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.load(ctx)
+
+	if b.state == StateHalfOpen && b.probes > 0 {
+		b.probes--
+	}
+}
+
 // Record reports the outcome of a delivery.
 //
 // Only TRANSIENT and CONNECT_ERROR count as channel faults. A PERMANENT
@@ -193,6 +218,12 @@ func (b *Breaker) Record(ctx context.Context, class channel.ResultClass, now tim
 		b.recordSuccess(ctx, now)
 	case channel.ClassTransient, channel.ClassConnectError:
 		b.recordFailure(ctx, now)
+	case channel.ClassNotAttempted:
+		// Not an outcome. The router reports this class only when it decided
+		// not to call the channel, and it never calls Record for such a
+		// delivery — it calls Abandon. Reaching here means a caller wired it up
+		// wrong, and counting it either way would be inventing evidence about a
+		// channel nothing was asked of.
 	}
 }
 

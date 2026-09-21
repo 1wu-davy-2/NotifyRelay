@@ -253,7 +253,7 @@ func (w *Worker) drain(ctx context.Context) int {
 			if ctx.Err() != nil {
 				// Shutting down with work in hand: put it back rather than
 				// leave it in flight for the orphan recovery to find.
-				w.release(ctx, d, "shutting down", time.Now().UTC())
+				w.release(ctx, d, "shutting down", "", time.Now().UTC())
 				continue
 			}
 			w.process(ctx, d)
@@ -274,7 +274,7 @@ func (w *Worker) process(ctx context.Context, d *store.Delivery) {
 		// The body is gone. No retry brings it back, and pretending otherwise
 		// would keep a permanently undeliverable message in the queue.
 		w.deadLetter(ctx, d,
-			w.attempt(d, classPayloadMissing, "spool file could not be read", err.Error(), 0),
+			w.attempt(d, classPayloadMissing, "spool file could not be read", err.Error(), "", 0),
 			"payload missing")
 		return
 	}
@@ -288,7 +288,7 @@ func (w *Worker) process(ctx context.Context, d *store.Delivery) {
 
 	w.opts.Metrics.ObserveDelivery(d.ChannelType, res.Class().String(), elapsed)
 
-	attempt := w.attempt(d, res.Class().String(), res.Detail, res.Error, elapsed.Milliseconds())
+	attempt := w.attempt(d, res.Class().String(), res.Detail, res.Error, string(res.Reason()), elapsed.Milliseconds())
 
 	switch res.Class() {
 	case channel.ClassSent:
@@ -306,15 +306,37 @@ func (w *Worker) process(ctx context.Context, d *store.Delivery) {
 		// The peer gave a verdict, so this counts as an attempt.
 		w.retryOrGiveUp(ctx, d, attempt, res.Error)
 
-	default: // channel.ClassConnectError
-		// Nothing reached the peer. Charging an attempt would let one
-		// downstream outage burn through every message's retry budget.
-		if reason := w.opts.Policy.ExhaustedReason(d.Attempts, time.Since(d.CreatedAt)); reason != "" {
-			w.deadLetter(ctx, d, attempt, reason)
-			return
-		}
-		w.release(ctx, d, "no channel capacity: "+res.Detail, time.Now().UTC().Add(w.opts.ReleaseDelay))
+	case channel.ClassConnectError, channel.ClassNotAttempted:
+		w.releaseNoCapacity(ctx, d, attempt, res)
+
+	default:
+		// A class this build does not know. A channel implementation is
+		// returning something it should not, so the honest response is to
+		// neither claim delivery nor discard the message: release it, say so
+		// loudly, and let the retention policy decide.
+		w.opts.Log.Error("queue: unclassified delivery result; releasing",
+			slog.String("delivery", d.ID),
+			slog.String("class", res.Class().String()),
+		)
+		w.releaseNoCapacity(ctx, d, attempt, res)
 	}
+}
+
+// releaseNoCapacity returns a delivery to the queue without spending one of its
+// attempts.
+//
+// Two situations share this path and mean different things — the peer was never
+// reached (ClassConnectError), or the peer was never called
+// (ClassNotAttempted, with res.Reason() naming which limit stopped it). They
+// behave identically because the message has not had its chance either way, and
+// the attempt budget is there to bound real attempts.
+func (w *Worker) releaseNoCapacity(ctx context.Context, d *store.Delivery, attempt *store.Attempt, res router.TargetResult) {
+	if reason := w.opts.Policy.ExhaustedReason(d.Attempts, time.Since(d.CreatedAt)); reason != "" {
+		w.deadLetter(ctx, d, attempt, reason)
+		return
+	}
+	w.release(ctx, d, noCapacityReason(res.Detail), string(res.Reason()),
+		time.Now().UTC().Add(w.opts.ReleaseDelay))
 }
 
 // retryOrGiveUp reschedules a delivery, or dead-letters it when the policy
@@ -358,8 +380,8 @@ func (w *Worker) deadLetter(ctx context.Context, d *store.Delivery, attempt *sto
 	w.discard(d)
 }
 
-func (w *Worker) release(ctx context.Context, d *store.Delivery, reason string, next time.Time) {
-	released, err := w.opts.Store.Release(ctx, d.ID, reason, next)
+func (w *Worker) release(ctx context.Context, d *store.Delivery, reason, skipReason string, next time.Time) {
+	released, err := w.opts.Store.Release(ctx, d.ID, reason, skipReason, next)
 	if err != nil {
 		w.opts.Log.Error("queue: release failed",
 			slog.String("delivery", d.ID), slog.String("error", err.Error()))
@@ -371,7 +393,7 @@ func (w *Worker) release(ctx context.Context, d *store.Delivery, reason string, 
 }
 
 // attempt builds the audit record for a delivery outcome.
-func (w *Worker) attempt(d *store.Delivery, class, detail, errMsg string, elapsedMS int64) *store.Attempt {
+func (w *Worker) attempt(d *store.Delivery, class, detail, errMsg, skipReason string, elapsedMS int64) *store.Attempt {
 	return &store.Attempt{
 		DeliveryID:  d.ID,
 		RequestID:   d.RequestID,
@@ -381,11 +403,22 @@ func (w *Worker) attempt(d *store.Delivery, class, detail, errMsg string, elapse
 		Class:       class,
 		Detail:      detail,
 		Error:       errMsg,
+		SkipReason:  skipReason,
 		ElapsedMS:   elapsedMS,
 	}
 }
 
 const classPayloadMissing = "PAYLOAD_MISSING"
+
+// noCapacityReason words the release reason without a dangling separator: a
+// delivery held back by the breaker has no detail to append, and
+// "no channel capacity: " reads like a message that got truncated.
+func noCapacityReason(detail string) string {
+	if detail == "" {
+		return "no channel capacity"
+	}
+	return "no channel capacity: " + detail
+}
 
 func (w *Worker) loadMessage(d *store.Delivery) (*message.Message, error) {
 	raw, err := w.opts.Spool.Get(d.ID)

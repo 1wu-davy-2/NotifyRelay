@@ -47,6 +47,10 @@ type Config struct {
 }
 
 func parseConfig(raw map[string]any) (Config, error) {
+	// The schema is the source of the bounds applied below; parseConfig does
+	// not carry a second copy of them.
+	specs := paramSchema()
+
 	var cfg Config
 	var err error
 
@@ -80,15 +84,9 @@ func parseConfig(raw map[string]any) (Config, error) {
 	if cfg.Timeout, err = channel.DurationParamOr(raw, "timeout", defaultTimeout); err != nil {
 		return cfg, err
 	}
-	if cfg.Timeout <= 0 {
-		return cfg, fmt.Errorf("parameter \"timeout\" must be greater than zero")
-	}
 
-	if cfg.RatePerSec, err = channel.FloatParamOr(raw, "rate_per_sec", defaultRatePerSec); err != nil {
+	if cfg.RatePerSec, err = channel.FloatParamBounded(raw, specs, "rate_per_sec", defaultRatePerSec); err != nil {
 		return cfg, err
-	}
-	if cfg.RatePerSec < 0 {
-		return cfg, fmt.Errorf("parameter \"rate_per_sec\" must not be negative")
 	}
 
 	if cfg.CAFile, err = channel.StringParamOr(raw, "ca_file", ""); err != nil {
@@ -152,6 +150,11 @@ func (c *Config) parseApp(raw map[string]any) error {
 }
 
 func paramSchema() []channel.ParamSpec {
+	zero := 0.0
+	when := func(mode string) *channel.Condition {
+		return &channel.Condition{Field: "mode", Equals: mode}
+	}
+
 	specs := []channel.ParamSpec{
 		{
 			Name: "mode", Type: channel.ParamEnum, Values: []string{"webhook", "app"}, Default: "webhook",
@@ -159,28 +162,36 @@ func paramSchema() []channel.ParamSpec {
 			Desc:  "webhook posts to a group robot; app posts through an application and needs the credentials below.",
 		},
 		{
-			Name: "webhook_url", Type: channel.ParamString, Private: true,
+			// The two modes need disjoint sets of fields, which is the case
+			// ShowIf exists for: without it a generated form shows seven
+			// optional boxes and marks none of them required, and the operator
+			// finds out which ones mattered when the service refuses to start.
+			Name: "webhook_url", Type: channel.ParamString, Private: true, ShowIf: when("webhook"),
 			Label: "Group robot webhook",
 			Desc:  "Required in webhook mode. https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...",
 		},
 		{
-			Name: "corp_id", Type: channel.ParamString,
+			Name: "corp_id", Type: channel.ParamString, ShowIf: when("app"),
 			Label: "Corp ID", Desc: "Required in app mode.",
 		},
 		{
-			Name: "corp_secret", Type: channel.ParamString, Private: true,
+			Name: "corp_secret", Type: channel.ParamString, Private: true, ShowIf: when("app"),
 			Label: "Corp secret", Desc: "Required in app mode. Write as `!env WECOM_SECRET`.",
 		},
 		{
-			Name: "agent_id", Type: channel.ParamInt,
+			// No Min: the "must be positive" rule holds in app mode only, and a
+			// bound is not conditional. Declaring Min 1 would reject the absent
+			// value in webhook mode, where 0 is the right answer. The check
+			// stays in parseConfig, next to the mode that makes it true.
+			Name: "agent_id", Type: channel.ParamInt, ShowIf: when("app"),
 			Label: "Agent ID", Desc: "Required in app mode.",
 		},
 		{
-			Name: "to_user", Type: channel.ParamString,
+			Name: "to_user", Type: channel.ParamString, ShowIf: when("app"),
 			Label: "To users", Desc: "App mode. \"@all\", or a '|'-separated user list.",
 		},
 		{
-			Name: "to_party", Type: channel.ParamString,
+			Name: "to_party", Type: channel.ParamString, ShowIf: when("app"),
 			Label: "To departments", Desc: "App mode. A '|'-separated department list.",
 		},
 		{
@@ -192,7 +203,7 @@ func paramSchema() []channel.ParamSpec {
 			Label: "Request timeout",
 		},
 		{
-			Name: "rate_per_sec", Type: channel.ParamFloat, Default: defaultRatePerSec,
+			Name: "rate_per_sec", Type: channel.ParamFloat, Default: defaultRatePerSec, Min: &zero,
 			Label: "Rate limit", Desc: "Messages per second. A group robot allows 20 per minute.",
 		},
 	}
