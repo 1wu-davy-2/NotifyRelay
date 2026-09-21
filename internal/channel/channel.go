@@ -53,13 +53,20 @@ type ParamSpec struct {
 	Desc    string `json:"desc,omitempty"`
 
 	// ShowIf declares that this parameter only applies when another parameter
-	// has one of a small set of values, and that it is required when it does.
+	// has one of a small set of values — and that, when it applies, it is
+	// required unless it declares a Default.
 	//
 	// It exists because Required alone cannot express the shapes channels
 	// actually have. A webhook's `token` is required when auth_type is bearer,
 	// irrelevant otherwise, and `Required: false` says both things at once — so
 	// a generated form marks nothing as required and an operator discovers the
 	// mistake only when the service refuses to start.
+	//
+	// The Default carve-out is what separates "required" from "merely applies".
+	// A webhook's `signature_header` is in play under hmac and has a sensible
+	// value already, so an empty box is a fine answer; `signature_prefix` has
+	// the empty string as its default for the same reason. A boolean never
+	// needs one — an unchecked box is a value.
 	//
 	// Equality only, deliberately. A condition language would need an
 	// evaluator, two implementations of it (server and form) and a story for

@@ -1,0 +1,73 @@
+{{template "head" .}}
+{{template "nav" .}}
+<main>
+  {{template "flash" .}}
+
+  <div class="row">
+    <h1>Deliveries</h1>
+    <span class="spacer"></span>
+    <span class="muted">
+      queued {{.Stats.Queued}} · in flight {{.Stats.Sending}} ·
+      sent {{.Stats.Sent}} · failed {{.Stats.Failed}}
+    </span>
+  </div>
+
+  <form class="filters" method="get" action="/admin/deliveries">
+    <div>
+      <label for="status">Status</label>
+      <select id="status" name="status">
+        <option value="">any</option>
+        {{$status := .Status}}
+        {{range (list "queued" "sending" "sent" "failed")}}
+        <option value="{{.}}" {{if eq . $status}}selected{{end}}>{{.}}</option>
+        {{end}}
+      </select>
+    </div>
+    <div>
+      <label for="target">Channel</label>
+      <input id="target" name="target" value="{{.Target}}" placeholder="any">
+    </div>
+    <div>
+      <label for="request_id">Request ID</label>
+      <input id="request_id" name="request_id" value="{{.RequestID}}" placeholder="any">
+    </div>
+    <div>
+      <label for="limit">Per page</label>
+      <input id="limit" name="limit" type="number" min="1" max="500" value="{{.Limit}}">
+    </div>
+    <button type="submit" class="primary">Filter</button>
+    <a class="button" href="/admin/deliveries">Clear</a>
+  </form>
+
+  {{if .Deliveries}}
+  <table>
+    <thead>
+      <tr><th>Created</th><th>Channel</th><th>Status</th><th>Class</th><th>Attempts</th><th>Last error</th><th></th></tr>
+    </thead>
+    <tbody>
+    {{range .Deliveries}}
+      <tr>
+        <td title="{{stamp .CreatedAt}}">{{since .CreatedAt}}</td>
+        <td><code>{{.Target}}</code> <span class="muted">{{.ChannelType}}</span></td>
+        <td><span class="tag {{.Status}}">{{.Status}}</span></td>
+        <td class="muted">{{.LastClass}}</td>
+        <td>{{.Attempts}}</td>
+        <td class="ellipsis" title="{{.LastError}}">{{.LastError}}</td>
+        <td class="actions">
+          <a class="button" href="/admin/deliveries/{{.ID}}">Detail</a>
+          {{if .Replayable}}<button type="button" data-replay="{{.ID}}">Replay</button>{{end}}
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+
+  <div class="row pager">
+    {{if gt .Offset 0}}<a class="button" href="?offset={{.Prev}}&limit={{.Limit}}&status={{.Status}}&target={{.Target}}&request_id={{.RequestID}}">Newer</a>{{end}}
+    {{if eq (len .Deliveries) .Limit}}<a class="button" href="?offset={{.Next}}&limit={{.Limit}}&status={{.Status}}&target={{.Target}}&request_id={{.RequestID}}">Older</a>{{end}}
+  </div>
+  {{else}}
+  <p class="muted">Nothing matches.</p>
+  {{end}}
+</main>
+{{template "foot" .}}

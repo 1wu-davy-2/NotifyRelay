@@ -22,6 +22,8 @@ import (
 	"notifyrelay/internal/secret"
 	"notifyrelay/internal/store"
 	"notifyrelay/internal/store/sqlite"
+
+	"github.com/go-chi/chi/v5"
 )
 
 const (
@@ -96,17 +98,25 @@ func newHarness(t *testing.T, withKey bool) *harness {
 			SessionKey:   "session-key-value",
 			SessionTTL:   config.Duration(time.Hour),
 		},
-		Channels: source,
-		Breakers: breakers,
-		Router:   rtr,
-		Audit:    persistence,
-		Log:      log,
+		Channels:   source,
+		Breakers:   breakers,
+		Router:     rtr,
+		Deliveries: persistence,
+		Audit:      persistence,
+		Log:        log,
 	})
 	if h == nil {
 		t.Fatal("NewHandler returned nil for an enabled admin block")
 	}
 
-	return &harness{handler: h, store: persistence, source: source, breakers: breakers, router: rtr}
+	// Mounted the way api.NewHandler mounts it, so the tests exercise the real
+	// paths rather than the sub-router's own idea of them. A test that calls
+	// the handler directly would pass on "/channels" and prove nothing about
+	// where the routes actually live.
+	root := chi.NewRouter()
+	root.Mount("/admin", h)
+
+	return &harness{handler: root, store: persistence, source: source, breakers: breakers, router: rtr}
 }
 
 // ---------------------------------------------------------------- request kit
@@ -167,7 +177,7 @@ func (h *harness) do(t *testing.T, method, path string, body any, cookie *http.C
 func (h *harness) signIn(t *testing.T) *http.Cookie {
 	t.Helper()
 
-	res := h.do(t, http.MethodPost, "/api/login",
+	res := h.do(t, http.MethodPost, "/admin/api/login",
 		loginRequest{Username: testUser, Password: testPassword}, nil, false)
 	if res.code != http.StatusOK {
 		t.Fatalf("login: status %d: %s", res.code, res.text())
@@ -183,7 +193,7 @@ func (h *harness) signIn(t *testing.T) *http.Cookie {
 func TestLogin_AcceptsTheRightPasswordAndRejectsTheRest(t *testing.T) {
 	h := newHarness(t, true)
 
-	res := h.do(t, http.MethodPost, "/api/login",
+	res := h.do(t, http.MethodPost, "/admin/api/login",
 		loginRequest{Username: testUser, Password: testPassword}, nil, false)
 	if res.code != http.StatusOK {
 		t.Fatalf("status = %d: %s", res.code, res.text())
@@ -209,9 +219,9 @@ func TestLogin_AcceptsTheRightPasswordAndRejectsTheRest(t *testing.T) {
 func TestLogin_DoesNotRevealWhichHalfWasWrong(t *testing.T) {
 	h := newHarness(t, true)
 
-	wrongPassword := h.do(t, http.MethodPost, "/api/login",
+	wrongPassword := h.do(t, http.MethodPost, "/admin/api/login",
 		loginRequest{Username: testUser, Password: "nope"}, nil, false)
-	wrongUser := h.do(t, http.MethodPost, "/api/login",
+	wrongUser := h.do(t, http.MethodPost, "/admin/api/login",
 		loginRequest{Username: "someone-else", Password: testPassword}, nil, false)
 
 	if wrongPassword.code != http.StatusUnauthorized || wrongUser.code != http.StatusUnauthorized {
@@ -229,7 +239,7 @@ func TestLogin_ThrottlesRepeatedFailures(t *testing.T) {
 
 	var throttled bool
 	for i := 0; i < freeAttempts+3; i++ {
-		res := h.do(t, http.MethodPost, "/api/login",
+		res := h.do(t, http.MethodPost, "/admin/api/login",
 			loginRequest{Username: testUser, Password: "wrong"}, nil, false)
 		if res.code == http.StatusTooManyRequests {
 			throttled = true
@@ -245,7 +255,7 @@ func TestLogin_ThrottlesRepeatedFailures(t *testing.T) {
 
 	// And the correct password does not get through either while the delay
 	// stands — otherwise the throttle is decorative.
-	res := h.do(t, http.MethodPost, "/api/login",
+	res := h.do(t, http.MethodPost, "/admin/api/login",
 		loginRequest{Username: testUser, Password: testPassword}, nil, false)
 	if res.code != http.StatusTooManyRequests {
 		t.Errorf("status = %d during the backoff, want 429", res.code)
@@ -256,17 +266,17 @@ func TestLogin_ASuccessfulSignInClearsTheThrottle(t *testing.T) {
 	h := newHarness(t, true)
 
 	for i := 0; i < freeAttempts-1; i++ {
-		h.do(t, http.MethodPost, "/api/login",
+		h.do(t, http.MethodPost, "/admin/api/login",
 			loginRequest{Username: testUser, Password: "wrong"}, nil, false)
 	}
-	if res := h.do(t, http.MethodPost, "/api/login",
+	if res := h.do(t, http.MethodPost, "/admin/api/login",
 		loginRequest{Username: testUser, Password: testPassword}, nil, false); res.code != http.StatusOK {
 		t.Fatalf("status = %d after a few mistakes: %s", res.code, res.text())
 	}
 
 	// A fresh run of mistakes starts from zero.
 	for i := 0; i < freeAttempts-1; i++ {
-		res := h.do(t, http.MethodPost, "/api/login",
+		res := h.do(t, http.MethodPost, "/admin/api/login",
 			loginRequest{Username: testUser, Password: "wrong"}, nil, false)
 		if res.code == http.StatusTooManyRequests {
 			t.Fatal("the failure count was not cleared by the successful sign-in")
@@ -280,11 +290,11 @@ func TestProtectedRoutes_RequireASession(t *testing.T) {
 	h := newHarness(t, true)
 
 	for _, tc := range []struct{ method, path string }{
-		{http.MethodGet, "/api/session"},
-		{http.MethodGet, "/api/channels"},
-		{http.MethodGet, "/api/channels/types"},
-		{http.MethodGet, "/api/audit"},
-		{http.MethodDelete, "/api/channels/anything"},
+		{http.MethodGet, "/admin/api/session"},
+		{http.MethodGet, "/admin/api/channels"},
+		{http.MethodGet, "/admin/api/channels/types"},
+		{http.MethodGet, "/admin/api/audit"},
+		{http.MethodDelete, "/admin/api/channels/anything"},
 	} {
 		res := h.do(t, tc.method, tc.path, nil, nil, true)
 		if res.code != http.StatusUnauthorized {
@@ -296,7 +306,7 @@ func TestProtectedRoutes_RequireASession(t *testing.T) {
 func TestProtectedRoutes_RejectAForgedCookie(t *testing.T) {
 	h := newHarness(t, true)
 
-	res := h.do(t, http.MethodGet, "/api/channels", nil,
+	res := h.do(t, http.MethodGet, "/admin/api/channels", nil,
 		&http.Cookie{Name: cookieName, Value: "not-a-real-session-id"}, true)
 	if res.code != http.StatusUnauthorized {
 		t.Errorf("status = %d with a made-up session id, want 401", res.code)
@@ -309,7 +319,7 @@ func TestStateChangingRequests_RequireTheCSRFHeader(t *testing.T) {
 	h := newHarness(t, true)
 	cookie := h.signIn(t)
 
-	res := h.do(t, http.MethodPost, "/api/channels",
+	res := h.do(t, http.MethodPost, "/admin/api/channels",
 		saveRequest{Name: "x", Type: "email", Config: map[string]any{}}, cookie, false)
 	if res.code != http.StatusForbidden {
 		t.Errorf("status = %d without the CSRF header, want 403", res.code)
@@ -317,7 +327,7 @@ func TestStateChangingRequests_RequireTheCSRFHeader(t *testing.T) {
 
 	// Reads do not need it: requiring it everywhere would mean the UI had to
 	// send it on navigations it does not control.
-	if res := h.do(t, http.MethodGet, "/api/channels", nil, cookie, false); res.code != http.StatusOK {
+	if res := h.do(t, http.MethodGet, "/admin/api/channels", nil, cookie, false); res.code != http.StatusOK {
 		t.Errorf("a read was refused without the CSRF header: %d", res.code)
 	}
 }
@@ -326,14 +336,14 @@ func TestLogout_EndsTheSessionServerSide(t *testing.T) {
 	h := newHarness(t, true)
 	cookie := h.signIn(t)
 
-	if res := h.do(t, http.MethodPost, "/api/logout", nil, cookie, true); res.code != http.StatusOK {
+	if res := h.do(t, http.MethodPost, "/admin/api/logout", nil, cookie, true); res.code != http.StatusOK {
 		t.Fatalf("logout: status %d", res.code)
 	}
 
 	// The cookie is still in the test's hand, as a copy taken from a shared
 	// machine would be. It must not work any more — that is the whole reason
 	// sessions are server-side.
-	res := h.do(t, http.MethodGet, "/api/session", nil, cookie, true)
+	res := h.do(t, http.MethodGet, "/admin/api/session", nil, cookie, true)
 	if res.code != http.StatusUnauthorized {
 		t.Errorf("status = %d after signing out, want 401", res.code)
 	}
@@ -380,7 +390,7 @@ func TestChannels_CreateAndRead(t *testing.T) {
 	h := newHarness(t, true)
 	cookie := h.signIn(t)
 
-	res := h.do(t, http.MethodPost, "/api/channels", saveRequest{
+	res := h.do(t, http.MethodPost, "/admin/api/channels", saveRequest{
 		Name: "oncall", Type: "email", Config: emailConfig("hunter2"),
 	}, cookie, true)
 	if res.code != http.StatusOK {
@@ -418,7 +428,7 @@ func TestChannels_CreateTakesEffectWithoutARestart(t *testing.T) {
 		t.Fatalf("the router started with %v", got)
 	}
 
-	h.do(t, http.MethodPost, "/api/channels", saveRequest{
+	h.do(t, http.MethodPost, "/admin/api/channels", saveRequest{
 		Name: "oncall", Type: "email", Config: emailConfig("hunter2"),
 	}, cookie, true)
 
@@ -434,11 +444,11 @@ func TestChannels_Delete(t *testing.T) {
 	h := newHarness(t, true)
 	cookie := h.signIn(t)
 
-	h.do(t, http.MethodPost, "/api/channels", saveRequest{
+	h.do(t, http.MethodPost, "/admin/api/channels", saveRequest{
 		Name: "oncall", Type: "email", Config: emailConfig("hunter2"),
 	}, cookie, true)
 
-	res := h.do(t, http.MethodDelete, "/api/channels/oncall", nil, cookie, true)
+	res := h.do(t, http.MethodDelete, "/admin/api/channels/oncall", nil, cookie, true)
 	if res.code != http.StatusOK {
 		t.Fatalf("delete: status %d: %s", res.code, res.text())
 	}
@@ -447,7 +457,7 @@ func TestChannels_Delete(t *testing.T) {
 	}
 
 	// Deleting it twice is a 404, not a second success.
-	if res := h.do(t, http.MethodDelete, "/api/channels/oncall", nil, cookie, true); res.code != http.StatusNotFound {
+	if res := h.do(t, http.MethodDelete, "/admin/api/channels/oncall", nil, cookie, true); res.code != http.StatusNotFound {
 		t.Errorf("second delete: status %d, want 404", res.code)
 	}
 }
@@ -459,7 +469,7 @@ func TestChannels_EditKeepsTheCredentialItWasNotGiven(t *testing.T) {
 	h := newHarness(t, true)
 	cookie := h.signIn(t)
 
-	h.do(t, http.MethodPost, "/api/channels", saveRequest{
+	h.do(t, http.MethodPost, "/admin/api/channels", saveRequest{
 		Name: "oncall", Type: "email", Config: emailConfig("hunter2"),
 	}, cookie, true)
 
@@ -471,7 +481,7 @@ func TestChannels_EditKeepsTheCredentialItWasNotGiven(t *testing.T) {
 	edited["username"] = "notify@example.com"
 	edited["host"] = "smtp2.example.com"
 
-	res := h.do(t, http.MethodPost, "/api/channels", saveRequest{
+	res := h.do(t, http.MethodPost, "/admin/api/channels", saveRequest{
 		Name: "oncall", Type: "email", Config: edited,
 	}, cookie, true)
 	if res.code != http.StatusOK {
@@ -496,7 +506,7 @@ func TestChannels_EditCanClearACredential(t *testing.T) {
 	h := newHarness(t, true)
 	cookie := h.signIn(t)
 
-	h.do(t, http.MethodPost, "/api/channels", saveRequest{
+	h.do(t, http.MethodPost, "/admin/api/channels", saveRequest{
 		Name: "oncall", Type: "email", Config: emailConfig("hunter2"),
 	}, cookie, true)
 
@@ -504,7 +514,7 @@ func TestChannels_EditCanClearACredential(t *testing.T) {
 	cleared["password"] = ""
 	cleared["username"] = ""
 
-	if res := h.do(t, http.MethodPost, "/api/channels", saveRequest{
+	if res := h.do(t, http.MethodPost, "/admin/api/channels", saveRequest{
 		Name: "oncall", Type: "email", Config: cleared,
 	}, cookie, true); res.code != http.StatusOK {
 		t.Fatalf("edit: status %d: %s", res.code, res.text())
@@ -538,7 +548,7 @@ func TestChannels_RejectAConfigurationThatWouldNotStart(t *testing.T) {
 		}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			res := h.do(t, http.MethodPost, "/api/channels", req, cookie, true)
+			res := h.do(t, http.MethodPost, "/admin/api/channels", req, cookie, true)
 			if res.code != http.StatusBadRequest {
 				t.Errorf("status = %d, want 400: %s", res.code, res.text())
 			}
@@ -560,7 +570,7 @@ func TestChannels_RefuseACredentialWithoutAKey(t *testing.T) {
 	h := newHarness(t, false)
 	cookie := h.signIn(t)
 
-	res := h.do(t, http.MethodPost, "/api/channels", saveRequest{
+	res := h.do(t, http.MethodPost, "/admin/api/channels", saveRequest{
 		Name: "oncall", Type: "email", Config: emailConfig("hunter2"),
 	}, cookie, true)
 	if res.code != http.StatusBadRequest {
@@ -575,7 +585,7 @@ func TestChannelTypes_ServesTheSchemaTheFormIsGeneratedFrom(t *testing.T) {
 	h := newHarness(t, true)
 	cookie := h.signIn(t)
 
-	res := h.do(t, http.MethodGet, "/api/channels/types", nil, cookie, false)
+	res := h.do(t, http.MethodGet, "/admin/api/channels/types", nil, cookie, false)
 	if res.code != http.StatusOK {
 		t.Fatalf("status = %d", res.code)
 	}
@@ -626,7 +636,7 @@ func TestBreakerReset_ClosesAnOpenChannelAndIsAudited(t *testing.T) {
 	h := newHarness(t, true)
 	cookie := h.signIn(t)
 
-	h.do(t, http.MethodPost, "/api/channels", saveRequest{
+	h.do(t, http.MethodPost, "/admin/api/channels", saveRequest{
 		Name: "oncall", Type: "email", Config: emailConfig("hunter2"),
 	}, cookie, true)
 
@@ -640,7 +650,7 @@ func TestBreakerReset_ClosesAnOpenChannelAndIsAudited(t *testing.T) {
 		t.Fatal("the breaker should be open")
 	}
 
-	res := h.do(t, http.MethodPost, "/api/channels/oncall/breaker/reset", nil, cookie, true)
+	res := h.do(t, http.MethodPost, "/admin/api/channels/oncall/breaker/reset", nil, cookie, true)
 	if res.code != http.StatusOK {
 		t.Fatalf("reset: status %d: %s", res.code, res.text())
 	}
@@ -678,7 +688,7 @@ func TestBreakerReset_RefusesAnUnknownChannel(t *testing.T) {
 	h := newHarness(t, true)
 	cookie := h.signIn(t)
 
-	res := h.do(t, http.MethodPost, "/api/channels/nope/breaker/reset", nil, cookie, true)
+	res := h.do(t, http.MethodPost, "/admin/api/channels/nope/breaker/reset", nil, cookie, true)
 	if res.code != http.StatusNotFound {
 		t.Errorf("status = %d for an unconfigured channel, want 404", res.code)
 	}
@@ -690,7 +700,7 @@ func TestAudit_RecordsWhatChangedAndNotTheValues(t *testing.T) {
 	h := newHarness(t, true)
 	cookie := h.signIn(t)
 
-	h.do(t, http.MethodPost, "/api/channels", saveRequest{
+	h.do(t, http.MethodPost, "/admin/api/channels", saveRequest{
 		Name: "oncall", Type: "email", Config: emailConfig("hunter2"),
 	}, cookie, true)
 
@@ -698,7 +708,7 @@ func TestAudit_RecordsWhatChangedAndNotTheValues(t *testing.T) {
 	edited["password"] = "a-different-secret"
 	edited["username"] = "notify@example.com"
 
-	h.do(t, http.MethodPost, "/api/channels", saveRequest{
+	h.do(t, http.MethodPost, "/admin/api/channels", saveRequest{
 		Name: "oncall", Type: "email", Config: edited,
 	}, cookie, true)
 
@@ -763,7 +773,7 @@ func TestChannels_SavedButNotLiveIsReported(t *testing.T) {
 		t.Fatalf("PutChannel: %v", err)
 	}
 
-	res := h.do(t, http.MethodPost, "/api/channels", saveRequest{
+	res := h.do(t, http.MethodPost, "/admin/api/channels", saveRequest{
 		Name: "oncall", Type: "email", Config: emailConfig("hunter2"),
 	}, cookie, true)
 
@@ -812,11 +822,11 @@ func TestChannels_ViewReportsWhetherTheChannelIsLive(t *testing.T) {
 	h := newHarness(t, true)
 	cookie := h.signIn(t)
 
-	h.do(t, http.MethodPost, "/api/channels", saveRequest{
+	h.do(t, http.MethodPost, "/admin/api/channels", saveRequest{
 		Name: "oncall", Type: "email", Config: emailConfig("hunter2"),
 	}, cookie, true)
 
-	res := h.do(t, http.MethodGet, "/api/channels/oncall", nil, cookie, false)
+	res := h.do(t, http.MethodGet, "/admin/api/channels/oncall", nil, cookie, false)
 	var view channelView
 	res.decode(t, &view)
 	if !view.Live {
@@ -826,11 +836,11 @@ func TestChannels_ViewReportsWhetherTheChannelIsLive(t *testing.T) {
 	// A disabled channel exists but is not loaded, and the two must be
 	// distinguishable — otherwise "off on purpose" and "broken" look the same.
 	disabled := false
-	h.do(t, http.MethodPost, "/api/channels", saveRequest{
+	h.do(t, http.MethodPost, "/admin/api/channels", saveRequest{
 		Name: "spare", Type: "email", Enabled: &disabled, Config: emailConfig("hunter2"),
 	}, cookie, true)
 
-	res = h.do(t, http.MethodGet, "/api/channels/spare", nil, cookie, false)
+	res = h.do(t, http.MethodGet, "/admin/api/channels/spare", nil, cookie, false)
 	res.decode(t, &view)
 	if view.Enabled {
 		t.Error("a disabled channel came back enabled")
@@ -864,7 +874,7 @@ func TestSaveChannel_AcceptsTheJSONTheUIActuallySends(t *testing.T) {
 		          "per_day": 5000, "per_month": 100000}
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/channels", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/channels", strings.NewReader(body))
 	req.RemoteAddr = "203.0.113.7:54321"
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(csrfHeader, "1")
@@ -897,7 +907,7 @@ func TestSaveChannel_RefusesUnknownFields(t *testing.T) {
 	h := newHarness(t, true)
 	cookie := h.signIn(t)
 
-	res := h.do(t, http.MethodPost, "/api/channels", map[string]any{
+	res := h.do(t, http.MethodPost, "/admin/api/channels", map[string]any{
 		"name": "sink", "type": "webhook",
 		"config": map[string]any{"url": "https://example.com/notify", "auth_type": "none"},
 		"quotas": map[string]any{"per_minute": 100},

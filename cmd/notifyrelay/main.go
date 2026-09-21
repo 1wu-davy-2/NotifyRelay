@@ -214,11 +214,14 @@ func run() error {
 	// nothing is mounted.
 	adminHandler := admin.NewHandler(admin.Deps{
 		Config:   cfg.Admin,
-		Channels: channelSource,
-		Breakers: breakers,
-		Router:   rtr,
-		Audit:    persistence,
-		Log:      log,
+		Channels:   channelSource,
+		Breakers:   breakers,
+		Router:     rtr,
+		Deliveries: persistence,
+		Bodies:     bodies,
+		Waker:      worker,
+		Audit:      persistence,
+		Log:        log,
 	})
 
 	handler := api.NewHandler(api.Deps{

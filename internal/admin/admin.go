@@ -44,6 +44,14 @@ type Deps struct {
 	// Router is reloaded after a configuration change. Optional, and without it
 	// a saved channel does not take effect until a restart.
 	Router *router.Router
+	// Deliveries reads delivery state and replays dead letters. Optional.
+	Deliveries DeliveryStore
+	// Bodies reports whether a message is still on disk. Optional; without it
+	// nothing is offered for replay, which is the honest answer when the
+	// surface cannot tell.
+	Bodies BodyStore
+	// Waker nudges the queue after a replay. Optional.
+	Waker Waker
 	// Audit records what operators did. Optional.
 	Audit store.AdminAudit
 	Log   *slog.Logger
@@ -91,8 +99,32 @@ func NewHandler(d Deps) http.Handler {
 	r := chi.NewRouter()
 	r.Use(h.securityHeaders)
 
+	// The UI's own assets are served without a session: they contain no data,
+	// and a login page that cannot load its stylesheet looks broken in a way
+	// that suggests the server is.
+	if err := registerAssets(r); err != nil {
+		log.Error("admin: the operator UI has no stylesheet", slog.String("error", err.Error()))
+	}
+
+	r.Get("/login", h.loginPage)
 	r.Post("/api/login", h.login)
 	r.Post("/api/logout", h.logout)
+
+	// Pages redirect to the sign-in form rather than answering 401: a browser
+	// renders a JSON error as a blank page, and "sign in first" is not an
+	// answer to "why is this page empty".
+	r.Group(func(pr chi.Router) {
+		// Session-checked like the rest, so an unauthenticated visitor lands on
+		// the sign-in form rather than being bounced through a redirect chain
+		// that ends there anyway.
+		pr.Get("/", h.pageHandler(func(w http.ResponseWriter, r *http.Request, _ string) {
+			http.Redirect(w, r, "/admin/channels", http.StatusFound)
+		}))
+		pr.Get("/channels", h.pageHandler(h.channelsPage))
+		pr.Get("/deliveries", h.pageHandler(h.deliveriesPage))
+		pr.Get("/deliveries/{id}", h.pageHandler(h.deliveryPage))
+		pr.Get("/audit", h.pageHandler(h.auditPage))
+	})
 
 	r.Group(func(pr chi.Router) {
 		pr.Use(h.requireSession)
@@ -106,6 +138,11 @@ func NewHandler(d Deps) http.Handler {
 		pr.Delete("/api/channels/{name}", h.deleteChannel)
 		pr.Post("/api/channels/{name}/test", h.testChannel)
 		pr.Post("/api/channels/{name}/breaker/reset", h.resetBreaker)
+
+		pr.Get("/api/deliveries", h.listDeliveries)
+		pr.Get("/api/deliveries/{id}", h.getDelivery)
+		pr.Post("/api/deliveries/{id}/replay", h.replayDelivery)
+		pr.Get("/api/stats", h.stats)
 
 		pr.Get("/api/audit", h.listAudit)
 	})

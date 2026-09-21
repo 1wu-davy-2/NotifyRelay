@@ -1,0 +1,36 @@
+{{define "head"}}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · NotifyRelay</title>
+<link rel="stylesheet" href="/admin/app.css">
+</head>
+<body>
+{{end}}
+
+{{define "nav"}}
+<header class="bar">
+  <span class="brand">NotifyRelay</span>
+  <nav>
+    <a href="/admin/channels" {{if eq .Nav "channels"}}class="on"{{end}}>Channels</a>
+    <a href="/admin/deliveries" {{if eq .Nav "deliveries"}}class="on"{{end}}>Deliveries</a>
+    <a href="/admin/audit" {{if eq .Nav "audit"}}class="on"{{end}}>Audit</a>
+  </nav>
+  <span class="spacer"></span>
+  <span class="actor">{{.Actor}}</span>
+  <button type="button" class="link" id="sign-out">Sign out</button>
+</header>
+{{end}}
+
+{{define "flash"}}
+{{if .Flash}}<p class="flash ok">{{.Flash}}</p>{{end}}
+{{if .Error}}<p class="flash bad">{{.Error}}</p>{{end}}
+{{end}}
+
+{{define "foot"}}
+<script src="/admin/app.js"></script>
+</body>
+</html>
+{{end}}

@@ -1,0 +1,61 @@
+{{template "head" .}}
+{{template "nav" .}}
+<main>
+  {{template "flash" .}}
+
+  <div class="row">
+    <h1>Delivery</h1>
+    <span class="spacer"></span>
+    <a class="button" href="/admin/deliveries">Back</a>
+    {{if .Delivery.Replayable}}
+    <button type="button" class="primary" data-replay="{{.Delivery.ID}}">Replay</button>
+    {{end}}
+  </div>
+
+  <dl class="facts">
+    <dt>ID</dt><dd><code>{{.Delivery.ID}}</code></dd>
+    <dt>Request</dt><dd><code>{{.Delivery.RequestID}}</code></dd>
+    <dt>Channel</dt><dd><code>{{.Delivery.Target}}</code> <span class="muted">{{.Delivery.ChannelType}}</span></dd>
+    <dt>Status</dt><dd><span class="tag {{.Delivery.Status}}">{{.Delivery.Status}}</span></dd>
+    <dt>Attempts</dt><dd>{{.Delivery.Attempts}}</dd>
+    <dt>Created</dt><dd>{{stamp .Delivery.CreatedAt}} <span class="muted">({{since .Delivery.CreatedAt}})</span></dd>
+    {{if .Delivery.SentAt}}<dt>Sent</dt><dd>{{stamp .Delivery.SentAt}}</dd>{{end}}
+    {{if .Delivery.NextAttemptAt}}<dt>Next attempt</dt><dd>{{stamp .Delivery.NextAttemptAt}}</dd>{{end}}
+    {{if .Delivery.LastError}}<dt>Last error</dt><dd class="wrap">{{.Delivery.LastError}}</dd>{{end}}
+  </dl>
+
+  {{if not .Delivery.Replayable}}
+  <p class="muted">
+    {{if eq .Delivery.Status "failed"}}
+      The message body is no longer on disk, so this one cannot be replayed.
+    {{else}}
+      Only a dead-lettered delivery can be replayed.
+    {{end}}
+  </p>
+  {{end}}
+
+  <h2>Attempts</h2>
+  {{if .Attempts}}
+  <table>
+    <thead>
+      <tr><th>#</th><th>When</th><th>Class</th><th>Skipped</th><th>ms</th><th>Detail</th><th>Error</th></tr>
+    </thead>
+    <tbody>
+    {{range .Attempts}}
+      <tr>
+        <td>{{.AttemptNo}}</td>
+        <td title="{{stamp .CreatedAt}}">{{since .CreatedAt}}</td>
+        <td><span class="tag {{lower .Class}}">{{.Class}}</span></td>
+        <td class="muted">{{.SkipReason}}</td>
+        <td>{{.ElapsedMS}}</td>
+        <td class="wrap">{{.Detail}}</td>
+        <td class="wrap">{{.Error}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="muted">No attempts recorded.</p>
+  {{end}}
+</main>
+{{template "foot" .}}

@@ -179,7 +179,7 @@ func ParamSpecs() []channel.ParamSpec {
 			Label: "Signature header", Desc: "Used when auth_type is hmac.",
 		},
 		{
-			Name: "signature_prefix", Type: channel.ParamString, ShowIf: when("hmac"),
+			Name: "signature_prefix", Type: channel.ParamString, Default: "", ShowIf: when("hmac"),
 			Label: "Signature prefix", Desc: "Prepended to the digest, for example \"sha256=\".",
 		},
 		{

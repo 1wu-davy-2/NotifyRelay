@@ -250,6 +250,14 @@ type Queue interface {
 	// which is what makes the scan independent of a restart.
 	RecoverOrphans(ctx context.Context, claimTimeout time.Duration, now time.Time) (int, error)
 
+	// Replay returns a dead-lettered delivery to the queue with its attempt
+	// budget restored, and reports whether it was moved.
+	//
+	// It refuses anything that is not dead-lettered. A sent delivery has
+	// already arrived, and putting it back would deliver a second copy to real
+	// people — the one outcome worse than the notification being late.
+	Replay(ctx context.Context, id string, now time.Time) (bool, error)
+
 	// Get returns one delivery, or nil when there is no such delivery.
 	Get(ctx context.Context, id string) (*Delivery, error)
 
@@ -369,3 +377,10 @@ type AdminAudit interface {
 	// PruneAdminActions deletes entries older than the cutoff.
 	PruneAdminActions(ctx context.Context, before time.Time) (int, error)
 }
+
+// Replayable reports whether a delivery can be put back in the queue.
+//
+// Only a dead-lettered delivery can. A sent one has already arrived, and
+// replaying it would send a second copy — which is the one outcome worse than
+// the notification being late.
+func (s Status) Replayable() bool { return s == StatusFailed }

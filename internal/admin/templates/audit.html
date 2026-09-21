@@ -1,0 +1,31 @@
+{{template "head" .}}
+{{template "nav" .}}
+<main>
+  {{template "flash" .}}
+  <h1>Operator actions</h1>
+  <p class="muted">
+    Everything done through this interface that changed something. Kept beyond
+    the delivery retention window, because "who turned this off" is asked long
+    after "what happened to this message".
+  </p>
+
+  {{if .Actions}}
+  <table>
+    <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Channel</th><th>Detail</th></tr></thead>
+    <tbody>
+    {{range .Actions}}
+      <tr>
+        <td title="{{stamp .At}}">{{since .At}}</td>
+        <td>{{.Actor}}</td>
+        <td><code>{{.Action}}</code></td>
+        <td><code>{{.Target}}</code></td>
+        <td class="wrap">{{.Detail}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="muted">Nothing yet.</p>
+  {{end}}
+</main>
+{{template "foot" .}}

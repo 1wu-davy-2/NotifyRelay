@@ -1,0 +1,136 @@
+{{template "head" .}}
+{{template "nav" .}}
+<main>
+  {{template "flash" .}}
+
+  <div class="row">
+    <h1>Channels</h1>
+    <span class="spacer"></span>
+    <a class="button" href="/admin/channels?edit=__new__">New channel</a>
+  </div>
+
+  {{if .Channels}}
+  <table>
+    <thead>
+      <tr><th>Name</th><th>Type</th><th>State</th><th>Secrets</th><th></th></tr>
+    </thead>
+    <tbody>
+    {{range .Channels}}
+      <tr>
+        <td><a href="/admin/channels?edit={{.Name}}">{{.Name}}</a></td>
+        <td><code>{{.Type}}</code></td>
+        <td>
+          {{if not .Enabled}}<span class="tag off">disabled</span>
+          {{else if .Live}}<span class="tag on">live</span>
+          {{else}}<span class="tag warn">not loaded</span>{{end}}
+        </td>
+        <td class="muted">{{if .SecretsSet}}{{join .SecretsSet ", "}}{{else}}—{{end}}</td>
+        <td class="actions">
+          <button type="button" data-test="{{.Name}}">Test</button>
+          <button type="button" data-reset-breaker="{{.Name}}">Reset breaker</button>
+          <button type="button" class="danger" data-delete="{{.Name}}">Delete</button>
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="muted">No channels configured. Deliveries will fail until there is one.</p>
+  {{end}}
+
+  <script type="application/json" id="catalog">{{.Catalog}}</script>
+
+  {{if .Editing}}
+  <section class="card">
+    <h2>{{if eq .Editing "__new__"}}New channel{{else}}Edit {{.Editing}}{{end}}</h2>
+
+    <form id="channel-form" data-editing="{{.Editing}}">
+      <div class="grid">
+        <div>
+          <label for="channel-name">Name</label>
+          <input id="channel-name" name="name" required
+                 value="{{if ne .Editing "__new__"}}{{.Editing}}{{end}}"
+                 {{if ne .Editing "__new__"}}readonly{{end}}>
+          <p class="desc">The alias used in API targets and SMTP recipient local parts.</p>
+        </div>
+        <div>
+          <label for="channel-type">Type</label>
+          <select id="channel-type" name="type" required>
+            {{range .Forms}}
+            <option value="{{.Type}}" {{if eq .Type $.EditType}}selected{{end}}>{{.Label}}</option>
+            {{end}}
+          </select>
+          <p class="desc">A channel type registered in this binary.</p>
+        </div>
+        <div>
+          <label for="channel-enabled">Enabled</label>
+          <input id="channel-enabled" name="enabled" type="checkbox"
+                 {{if or (eq .Editing "__new__") .EditEnabled}}checked{{end}}>
+        </div>
+      </div>
+
+      <h3>Configuration</h3>
+      {{$editType := .EditType}}
+      {{range .Forms}}
+      <div class="type-fields" data-type="{{.Type}}"
+           {{if ne .Type $editType}}hidden{{end}}>
+        {{range .Fields}}
+        <div class="field" data-field="{{.Name}}" data-required="{{if .Required}}1{{else}}0{{end}}"
+             {{if .ShowIfField}}data-show-if-field="{{.ShowIfField}}" data-show-if-equals="{{.ShowIfEquals}}"{{end}}
+             {{if .ShowIfField}}hidden{{end}}>
+          <label for="f-{{.Name}}">
+            {{.Label}}
+            <span class="req" {{if not .Required}}hidden{{end}} title="required">*</span>
+          </label>
+
+          {{if eq .Kind "checkbox"}}
+            <input id="f-{{.Name}}" name="{{.Name}}" type="checkbox" {{if .Checked}}checked{{end}}>
+          {{else if eq .Kind "select"}}
+            {{$value := .Value}}
+            <select id="f-{{.Name}}" name="{{.Name}}">
+              {{range .Options}}<option value="{{.}}" {{if eq . $value}}selected{{end}}>{{.}}</option>{{end}}
+            </select>
+          {{else if eq .Kind "number"}}
+            <input id="f-{{.Name}}" name="{{.Name}}" type="number" value="{{.Value}}"
+                   {{if .Min}}min="{{.Min}}"{{end}} {{if .Max}}max="{{.Max}}"{{end}}>
+          {{else if eq .Kind "password"}}
+            <input id="f-{{.Name}}" name="{{.Name}}" type="password" value=""
+                   autocomplete="new-password"
+                   placeholder="{{if .IsSet}}a value is stored — leave blank to keep it{{end}}">
+            {{if .IsSet}}
+            <label class="inline"><input type="checkbox" data-clear="{{.Name}}"> clear this value</label>
+            {{end}}
+          {{else}}
+            <input id="f-{{.Name}}" name="{{.Name}}" type="text" value="{{.Value}}">
+          {{end}}
+
+          {{if .Description}}<p class="desc">{{.Description}}</p>{{end}}
+        </div>
+        {{end}}
+      </div>
+      {{end}}
+
+      <h3>Allowance</h3>
+      <p class="desc">Zero means unlimited. A delivery that cannot get a slot goes back to the queue rather than failing.</p>
+      <div class="grid">
+        {{range $field := (list "per_second" "per_minute" "per_hour" "per_day" "per_month")}}
+        <div>
+          <label for="q-{{$field}}">{{$field}}</label>
+          <input id="q-{{$field}}" name="{{$field}}" type="number" min="0"
+                 value="{{quotaValue $.EditQuota $field}}">
+        </div>
+        {{end}}
+      </div>
+
+      <div class="row">
+        <button type="submit" class="primary">Save</button>
+        <a class="button" href="/admin/channels">Cancel</a>
+        <span class="spacer"></span>
+        <button type="button" id="test-form">Test connectivity</button>
+      </div>
+      <p class="flash" id="channel-result" hidden></p>
+    </form>
+  </section>
+  {{end}}
+</main>
+{{template "foot" .}}

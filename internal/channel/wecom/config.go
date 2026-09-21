@@ -187,12 +187,14 @@ func paramSchema() []channel.ParamSpec {
 			Label: "Agent ID", Desc: "Required in app mode.",
 		},
 		{
-			Name: "to_user", Type: channel.ParamString, ShowIf: when("app"),
-			Label: "To users", Desc: "App mode. \"@all\", or a '|'-separated user list.",
+			Name: "to_user", Type: channel.ParamString, Default: "", ShowIf: when("app"),
+			Label: "To users",
+			Desc:  "App mode. \"@all\", or a '|'-separated user list. One of this and To departments is required; the empty default is what says neither is required on its own.",
 		},
 		{
-			Name: "to_party", Type: channel.ParamString, ShowIf: when("app"),
-			Label: "To departments", Desc: "App mode. A '|'-separated department list.",
+			Name: "to_party", Type: channel.ParamString, Default: "", ShowIf: when("app"),
+			Label: "To departments",
+			Desc:  "App mode. A '|'-separated department list. One of this and To users is required.",
 		},
 		{
 			Name: "msg_type", Type: channel.ParamEnum, Values: []string{"markdown", "text"}, Default: "markdown",

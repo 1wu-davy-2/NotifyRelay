@@ -483,3 +483,34 @@ func timeOrZero(t *time.Time) time.Time {
 	}
 	return *t
 }
+
+// Replay implements store.Queue.
+//
+// It puts a dead-lettered delivery back as if it had just arrived: queued,
+// due now, with its attempt budget restored. The attempt history is kept, so
+// the audit trail still shows what happened the first time — erasing it would
+// make a replayed delivery look like one that was never tried, which is
+// exactly the fact somebody reading the trail is trying to establish.
+//
+// Only a failed delivery can be replayed. A sent one has already arrived, and
+// replaying it would deliver a second copy to real people.
+func (s *Store) Replay(ctx context.Context, id string, now time.Time) (bool, error) {
+	now = now.UTC()
+
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE deliveries
+		SET status = ?, attempts = 0, next_attempt_at = ?, last_error = '',
+		    last_class = '', claimed_at = 0, updated_at = ?
+		WHERE id = ? AND status = ?`,
+		string(store.StatusQueued), toNanos(now), toNanos(now),
+		id, string(store.StatusFailed))
+	if err != nil {
+		return false, fmt.Errorf("sqlite: replay %s: %w", id, err)
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("sqlite: replay %s: %w", id, err)
+	}
+	return affected > 0, nil
+}

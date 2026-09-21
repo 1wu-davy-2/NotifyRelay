@@ -375,9 +375,17 @@ func (w *Worker) deadLetter(ctx context.Context, d *store.Delivery, attempt *sto
 		slog.String("target", d.Target),
 		slog.String("reason", reason),
 	)
-	// The row is kept for the dead-letter list; the body is not needed to
-	// answer "what failed and why", and the row may outlive its usefulness.
-	w.discard(d)
+	// The body is deliberately kept.
+	//
+	// It used to be discarded here, on the reasoning that the row answers "what
+	// failed and why" without it. That was true until the dead-letter queue
+	// gained a replay button, and a replay without the message is not a replay
+	// — it is a row that says a notification was lost and cannot be recovered.
+	//
+	// The lifetime is bounded by failed_retention, which the spool pruner
+	// already enforces on file age, so the cost is disk rather than an
+	// unbounded leak. A delivery that succeeded is still discarded immediately:
+	// there is nothing to retry.
 }
 
 func (w *Worker) release(ctx context.Context, d *store.Delivery, reason, skipReason string, next time.Time) {

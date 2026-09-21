@@ -1,0 +1,19 @@
+{{template "head" .}}
+<main class="centred">
+  <form class="card login" id="login-form">
+    <h1>NotifyRelay</h1>
+    <p class="muted">Sign in to manage channels and deliveries.</p>
+
+    <label for="username">Username</label>
+    <input id="username" name="username" autocomplete="username" autofocus required>
+
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+
+    <button type="submit" class="primary">Sign in</button>
+    <p class="flash bad" id="login-error" hidden></p>
+  </form>
+</main>
+<script src="/admin/app.js"></script>
+</body>
+</html>
