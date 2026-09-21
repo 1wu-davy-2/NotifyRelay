@@ -234,6 +234,20 @@ func (s *session) Data(r io.Reader) error {
 			// tells the sending MTA to come back rather than bouncing the mail.
 			retryable = true
 		default:
+			// NOTE: this branch must stay on the conservative path — retryable,
+			// or a loud error — and must never quietly absorb a class that is
+			// merely new to it. Defaulting an unrecognised class to PERMANENT
+			// destroys the notification at exactly the moment the relay exists
+			// to hold on to it, and it does so silently: the sender is told the
+			// message is undeliverable, so it stops too, and nobody is left
+			// holding it.
+			//
+			// It has already happened once: adding ClassNotAttempted would have
+			// turned every breaker and quota refusal from 451 into 550 without
+			// touching this line.
+			//
+			// M5: reconsider whether an unknown class should panic, or defer,
+			// rather than being classified here at all.
 			permanent = true
 		}
 	}
