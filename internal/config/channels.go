@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"notifyrelay/internal/channel"
@@ -293,3 +294,94 @@ func specsFor(channelType string) []channel.ParamSpec {
 	return d.ParamSchema
 }
 
+
+// MaskSecrets returns a copy of a channel's configuration with the values of
+// private parameters removed, along with the names of the ones that were set.
+//
+// The values are removed rather than replaced with asterisks: a placeholder is
+// a value, and a form that posts it back would set the credential to the
+// placeholder. Reporting *which* parameters are configured separately is what
+// lets the UI show "a password is set" without ever holding the password.
+func MaskSecrets(channelType string, cfg map[string]any) (map[string]any, []string) {
+	masked := make(map[string]any, len(cfg))
+	for k, v := range cfg {
+		masked[k] = v
+	}
+
+	var set []string
+	for _, spec := range specsFor(channelType) {
+		if !spec.Private {
+			continue
+		}
+		value, ok := masked[spec.Name]
+		if !ok {
+			continue
+		}
+		delete(masked, spec.Name)
+
+		if s, _ := value.(string); s != "" {
+			set = append(set, spec.Name)
+		}
+	}
+
+	sort.Strings(set)
+	return masked, set
+}
+
+// MergeEdit returns cfg with the credentials it does not mention filled in from
+// what is already stored.
+//
+// A form cannot send back a credential it was never shown, so "absent" has to
+// mean "unchanged" — otherwise every edit of a channel's rate limit would clear
+// its password. The three cases are distinguished explicitly:
+//
+//	absent          keep whatever is stored
+//	""              clear it
+//	any other value set it
+//
+// An empty string therefore means "clear" rather than "unchanged", which is why
+// the UI must omit a field the operator did not touch rather than send it empty.
+//
+// It is separate from Save because the caller has to validate the *merged*
+// result. Validating what the client sent would refuse an edit that changes a
+// channel's host, on the grounds that the credential the form never showed is
+// missing — and the operator would have no way to satisfy it from the form.
+func (s *ChannelSource) MergeEdit(ctx context.Context, cfg ChannelConfig) (ChannelConfig, error) {
+	existing, err := s.Get(ctx, cfg.Name)
+	if err != nil {
+		return cfg, err
+	}
+	if existing == nil {
+		return cfg, nil
+	}
+
+	merged := make(map[string]any, len(cfg.Config))
+	for k, v := range cfg.Config {
+		merged[k] = v
+	}
+
+	for _, spec := range specsFor(cfg.Type) {
+		if !spec.Private {
+			continue
+		}
+		if _, mentioned := merged[spec.Name]; mentioned {
+			continue
+		}
+		if value, ok := existing.Config[spec.Name]; ok {
+			merged[spec.Name] = value
+		}
+	}
+
+	cfg.Config = merged
+	return cfg, nil
+}
+
+// SaveEdit merges and stores. Callers that validate should use MergeEdit and
+// Save separately, so that validation sees what will actually be stored.
+func (s *ChannelSource) SaveEdit(ctx context.Context, cfg ChannelConfig) error {
+	merged, err := s.MergeEdit(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	return s.Save(ctx, merged)
+}

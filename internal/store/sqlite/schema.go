@@ -117,6 +117,22 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT NOT NULL
 );
 
+-- What operators did through the admin surface.
+--
+-- Separate from the delivery audit because it answers a different question:
+-- not "what happened to this message" but "who turned off the thing that was
+-- protecting it". Kept forever by default; the retention sweep leaves it alone.
+CREATE TABLE IF NOT EXISTS admin_audit (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    at     INTEGER NOT NULL,
+    actor  TEXT    NOT NULL,
+    action TEXT    NOT NULL,
+    target TEXT    NOT NULL DEFAULT '',
+    detail TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_audit_at ON admin_audit (at);
+
 -- Channel configuration, so it can be edited without restarting the service.
 --
 -- config_json holds the channel's own parameter block. Values the channel

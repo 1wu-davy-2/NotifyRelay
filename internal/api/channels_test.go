@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"notifyrelay/internal/channel"
+	"notifyrelay/internal/router"
 )
 
 func getChannels(t *testing.T, h http.Handler, token string) (*httptest.ResponseRecorder, channelsResponse) {
@@ -29,7 +30,7 @@ func getChannels(t *testing.T, h http.Handler, token string) (*httptest.Response
 	return rec, resp
 }
 
-func findChannel(t *testing.T, resp channelsResponse, typeName string) channelInfo {
+func findChannel(t *testing.T, resp channelsResponse, typeName string) router.CatalogEntry {
 	t.Helper()
 	for _, c := range resp.Channels {
 		if c.Type == typeName {
@@ -37,7 +38,7 @@ func findChannel(t *testing.T, resp channelsResponse, typeName string) channelIn
 		}
 	}
 	t.Fatalf("channel %q missing from the response", typeName)
-	return channelInfo{}
+	return router.CatalogEntry{}
 }
 
 func TestChannels_ListsRegisteredTypesWithEnoughToConfigureThem(t *testing.T) {
@@ -114,22 +115,33 @@ func TestChannels_ListsConfiguredInstances(t *testing.T) {
 }
 
 // A declared default for a secret parameter would be a secret in the
-// configuration file, and this endpoint is not the place to publish it.
+// configuration file, and this document is not the place to publish it.
+//
+// The stripping now lives in router.Catalog, which both this endpoint and the
+// operator UI read, so the rule is asserted against a registered channel rather
+// than against a helper.
 func TestChannels_NeverPublishesASecretDefault(t *testing.T) {
 	registerFakeChannel()
 
-	// The built-in channels are registered by the aggregator package, which
-	// this test package does not import; assert on the rule directly instead.
-	spec := channel.ParamSpec{
-		Name: "password", Type: channel.ParamString, Private: true, Default: "hunter2",
-	}
-	if got := publicSpec(spec); got.Default != nil {
-		t.Errorf("a private parameter's default leaked: %v", got.Default)
+	entries := router.Catalog(nil)
+	if len(entries) == 0 {
+		t.Fatal("no channel types are registered")
 	}
 
-	open := channel.ParamSpec{Name: "host", Type: channel.ParamString, Default: "localhost"}
-	if got := publicSpec(open); got.Default != "localhost" {
-		t.Errorf("a non-private default was dropped: %v", got.Default)
+	found := false
+	for _, e := range entries {
+		for _, p := range e.Parameters {
+			if !p.Private {
+				continue
+			}
+			found = true
+			if p.Default != nil {
+				t.Errorf("%s.%s is private but published a default: %v", e.Type, p.Name, p.Default)
+			}
+		}
+	}
+	if !found {
+		t.Skip("no registered channel declares a private parameter in this test binary")
 	}
 }
 

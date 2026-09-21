@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"notifyrelay/internal/audit"
@@ -94,12 +95,27 @@ type Options struct {
 	Log *slog.Logger
 }
 
+// instanceSet is everything the router derives from the configured channels.
+//
+// It is one immutable value behind a pointer rather than four maps behind a
+// lock, because it is replaced wholesale by Reload: a reader takes one atomic
+// load and then works from a consistent snapshot, and a reload cannot be
+// observed half-applied — seeing the new channel's type before its instance
+// exists would be a delivery that resolves to a nil channel.
+//
+// Immutable after construction. Reload builds a new one; nothing mutates a set
+// that readers may be holding.
+type instanceSet struct {
+	instances map[string]channel.Channel
+	types     map[string]string
+	quotas    map[string]quota.Limits
+	secrets   map[string][]string
+}
+
 // Router holds the configured channel instances.
 type Router struct {
-	instances      map[string]channel.Channel
-	types          map[string]string
-	quotas         map[string]quota.Limits
-	secrets        map[string][]string
+	set atomic.Pointer[instanceSet]
+
 	deliverTimeout time.Duration
 	recorder       audit.Recorder
 	limiter        *limiter
@@ -119,10 +135,6 @@ func New(opts Options) (*Router, error) {
 	}
 
 	r := &Router{
-		instances:      make(map[string]channel.Channel),
-		types:          make(map[string]string),
-		quotas:         make(map[string]quota.Limits),
-		secrets:        make(map[string][]string),
 		deliverTimeout: opts.DeliverTimeout,
 		recorder:       opts.Audit,
 		limiter:        newLimiter(),
@@ -131,11 +143,36 @@ func New(opts Options) (*Router, error) {
 		log:            log,
 	}
 
-	for _, c := range opts.Channels {
+	set, err := buildSet(opts.Channels)
+	if err != nil {
+		return nil, err
+	}
+	r.set.Store(set)
+
+	return r, nil
+}
+
+// buildSet constructs an instance set from configuration.
+//
+// Every channel is built and validated before anything is published, so a
+// configuration with one bad channel produces no set at all rather than a
+// partial one. That matters more for Reload than for New: a reload that half
+// succeeded would leave the router serving a mixture of the old configuration
+// and the new one, and the operator would have no way to tell which channel
+// took effect.
+func buildSet(channels []config.ChannelConfig) (*instanceSet, error) {
+	set := &instanceSet{
+		instances: make(map[string]channel.Channel),
+		types:     make(map[string]string),
+		quotas:    make(map[string]quota.Limits),
+		secrets:   make(map[string][]string),
+	}
+
+	for _, c := range channels {
 		if !c.IsEnabled() {
 			continue
 		}
-		if _, dup := r.instances[c.Name]; dup {
+		if _, dup := set.instances[c.Name]; dup {
 			return nil, fmt.Errorf("router: duplicate channel instance %q", c.Name)
 		}
 
@@ -152,9 +189,9 @@ func New(opts Options) (*Router, error) {
 			return nil, fmt.Errorf("channel %q (type %q): %w", c.Name, c.Type, err)
 		}
 
-		r.instances[c.Name] = ch
-		r.types[c.Name] = c.Type
-		r.quotas[c.Name] = quota.Limits{
+		set.instances[c.Name] = ch
+		set.types[c.Name] = c.Type
+		set.quotas[c.Name] = quota.Limits{
 			PerSecond: c.Quota.PerSecond,
 			PerMinute: c.Quota.PerMinute,
 			PerHour:   c.Quota.PerHour,
@@ -165,27 +202,60 @@ func New(opts Options) (*Router, error) {
 		// it per delivery would re-walk the same handful of parameters on the
 		// hot path, and a credential's value does not change while the process
 		// runs.
-		r.secrets[c.Name] = channel.SecretValues(ch.ParamSchema(), c.Config)
+		set.secrets[c.Name] = channel.SecretValues(ch.ParamSchema(), c.Config)
 	}
 
-	return r, nil
+	return set, nil
+}
+
+// current returns the live instance set.
+func (r *Router) current() *instanceSet { return r.set.Load() }
+
+// Reload rebuilds the channel instances from configuration.
+//
+// A delivery already in flight keeps the channel object it resolved — it holds
+// a reference, and the old set stays alive until nothing points at it. What
+// changes is what the *next* delivery resolves. That is what makes "add a
+// channel without a restart" safe rather than merely convenient: there is no
+// moment at which a delivery in progress is looking at a channel that has been
+// taken away from it.
+//
+// A configuration that fails to build leaves the running set untouched and
+// returns the error. The caller decides whether to surface it; the service
+// keeps delivering on the configuration that works.
+func (r *Router) Reload(channels []config.ChannelConfig) error {
+	set, err := buildSet(channels)
+	if err != nil {
+		return err
+	}
+
+	before := r.current()
+	r.set.Store(set)
+
+	r.log.Info("router: channel configuration reloaded",
+		slog.Any("before", sortedKeys(before.instances)),
+		slog.Any("after", sortedKeys(set.instances)),
+	)
+	return nil
 }
 
 // RegisteredTypes returns the channel types this binary knows about.
 func RegisteredTypes() []channel.Descriptor { return channel.Descriptors() }
 
 // Instances returns the configured instance aliases, sorted.
-func (r *Router) Instances() []string {
-	out := make([]string, 0, len(r.instances))
-	for name := range r.instances {
+func (r *Router) Instances() []string { return sortedKeys(r.current().instances) }
+
+// TypeOf returns the channel type of a configured instance, or "" if unknown.
+func (r *Router) TypeOf(instance string) string { return r.current().types[instance] }
+
+func sortedKeys(m map[string]channel.Channel) []string {
+	out := make([]string, 0, len(m))
+	for name := range m {
 		out = append(out, name)
 	}
 	sort.Strings(out)
 	return out
 }
-
-// TypeOf returns the channel type of a configured instance, or "" if unknown.
-func (r *Router) TypeOf(instance string) string { return r.types[instance] }
 
 // TargetType resolves a target without delivering anything.
 //
@@ -414,7 +484,7 @@ func (r *Router) reserve(ctx context.Context, name string) (*quota.Reservation, 
 	if r.quota == nil {
 		return nil, true, ""
 	}
-	return r.quota.TryReserve(ctx, name, r.quotas[name])
+	return r.quota.TryReserve(ctx, name, r.current().quotas[name])
 }
 
 // resolve maps a target string to a configured channel instance.
@@ -442,12 +512,13 @@ func (r *Router) resolve(target string) (string, channel.Channel, error) {
 		wantType, name = strings.TrimSpace(t), strings.TrimSpace(n)
 	}
 
-	ch, ok := r.instances[name]
+	set := r.current()
+	ch, ok := set.instances[name]
 	if !ok {
-		return "", nil, fmt.Errorf("router: unknown channel %q (configured: %v)", name, r.Instances())
+		return "", nil, fmt.Errorf("router: unknown channel %q (configured: %v)", name, sortedKeys(set.instances))
 	}
-	if wantType != "" && r.types[name] != wantType {
-		return "", nil, fmt.Errorf("router: channel %q has type %q, not %q", name, r.types[name], wantType)
+	if wantType != "" && set.types[name] != wantType {
+		return "", nil, fmt.Errorf("router: channel %q has type %q, not %q", name, set.types[name], wantType)
 	}
 	return name, ch, nil
 }
@@ -460,7 +531,7 @@ func (r *Router) finish(ctx context.Context, requestID string, res TargetResult,
 	// several channels keep their token; this covers everything else — a
 	// response body echoed into a detail line, or a channel implementation that
 	// put a password into its own error without thinking about it.
-	secrets := r.secrets[res.Channel]
+	secrets := r.current().secrets[res.Channel]
 	res.Error = channel.Redact(res.Error, secrets)
 	res.Detail = channel.Redact(res.Detail, secrets)
 

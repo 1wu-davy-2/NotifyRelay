@@ -419,3 +419,124 @@ func TestBreaker_ALateProbeSuccessCannotReclose(t *testing.T) {
 		t.Error("a delivery was admitted; the breaker should still be open")
 	}
 }
+
+// --------------------------------------------------------------------- reset
+
+// The state must be written through, not merely cleared in memory. A reset that
+// lived only in the process would be undone by the next restart, and the
+// operator would conclude the button does not work — which is worse than not
+// having one, because they would stop looking for the real problem.
+func TestReset_SurvivesARestart(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	settings := testSettings()
+
+	persistence := newStore(t)
+	m := NewManager(settings, persistence, nil)
+	b := m.For("oncall")
+
+	for i := 0; i < settings.FailureThreshold; i++ {
+		fail(b, ctx, now)
+	}
+	if ok, _ := b.Allow(ctx, now); ok {
+		t.Fatal("the breaker should be open")
+	}
+
+	was := m.Reset(ctx, "oncall", now)
+	if was != StateOpen {
+		t.Errorf("Reset reported the previous state as %s, want open", was)
+	}
+
+	// A new process, same store.
+	restarted := NewManager(settings, persistence, nil).For("oncall")
+	if ok, _ := restarted.Allow(ctx, now); !ok {
+		t.Error("the breaker was open again after a restart: the reset was not persisted")
+	}
+	if state, failures := restarted.Snapshot(ctx, now); state != StateClosed || failures != 0 {
+		t.Errorf("after restart: state = %s, failures = %d", state, failures)
+	}
+}
+
+// The case For() exists to cover: a channel this process has never delivered
+// to, whose breaker a *previous* run left open. Resetting the absence would
+// clear nothing.
+func TestReset_ClearsStateLeftByAPreviousRun(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	settings := testSettings()
+
+	persistence := newStore(t)
+	if err := persistence.SaveBreaker(ctx, &store.BreakerState{
+		Channel:  "oncall",
+		State:    string(StateOpen),
+		Failures: 42,
+		OpenedAt: now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("SaveBreaker: %v", err)
+	}
+
+	// A fresh manager that has never seen this channel.
+	m := NewManager(settings, persistence, nil)
+	if was := m.Reset(ctx, "oncall", now); was != StateOpen {
+		t.Errorf("Reset reported %q, want it to have loaded the persisted open state", was)
+	}
+
+	rec, err := persistence.LoadBreaker(ctx, "oncall")
+	if err != nil {
+		t.Fatalf("LoadBreaker: %v", err)
+	}
+	if rec.State != string(StateClosed) {
+		t.Errorf("persisted state = %q, want closed", rec.State)
+	}
+
+	if ok, _ := NewManager(settings, persistence, nil).For("oncall").Allow(ctx, now); !ok {
+		t.Error("the channel was still refused after a reset and a restart")
+	}
+}
+
+// A reset answers "try again". It does not answer "pretend the last hour did
+// not happen", so the failure count goes to zero but nothing else is touched.
+func TestReset_ClearsFailuresAndProbes(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	settings := testSettings()
+	settings.HalfOpenProbes = 1
+
+	b := NewManager(settings, nil, nil).For("oncall")
+	for i := 0; i < settings.FailureThreshold; i++ {
+		fail(b, ctx, now)
+	}
+
+	// Move into half-open and take the single probe slot.
+	probeAt := now.Add(settings.OpenTimeout + time.Second)
+	if ok, _ := b.Allow(ctx, probeAt); !ok {
+		t.Fatal("the probe should be admitted")
+	}
+
+	b.Reset(ctx, probeAt)
+
+	if state, failures := b.Snapshot(ctx, probeAt); state != StateClosed || failures != 0 {
+		t.Errorf("state = %s, failures = %d after reset", state, failures)
+	}
+	// A probe slot left taken would wedge the breaker again the moment it
+	// reopened, which is the failure Abandon exists to prevent.
+	for i := 0; i < 5; i++ {
+		if ok, _ := b.Allow(ctx, probeAt); !ok {
+			t.Fatal("the breaker refuses deliveries after a reset")
+		}
+	}
+}
+
+// Resetting a channel that is already closed is a no-op, not an error.
+func TestReset_OnAClosedBreakerIsHarmless(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	m := NewManager(testSettings(), nil, nil)
+	if was := m.Reset(ctx, "oncall", now); was != StateClosed {
+		t.Errorf("Reset reported %q, want closed", was)
+	}
+	if ok, _ := m.For("oncall").Allow(ctx, now); !ok {
+		t.Error("a closed breaker refused a delivery")
+	}
+}

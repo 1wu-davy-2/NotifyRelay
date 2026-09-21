@@ -335,10 +335,37 @@ type Store interface {
 	Quotas
 	Channels
 	Meta
+	AdminAudit
 
 	// Ping reports whether the store is usable, for the readiness probe.
 	Ping(ctx context.Context) error
 
 	// Close releases the store's resources.
 	Close() error
+}
+
+// AdminAction is one thing an operator did through the admin surface.
+//
+// It is recorded because the actions worth auditing are the ones that turn off
+// an automatic protection: resetting a breaker, deleting a channel, pointing
+// one at a different endpoint. Those are all reasonable things to do, and all
+// things somebody asks about afterwards. A log line answers the question only
+// if the log still exists; a row answers it from the UI.
+type AdminAction struct {
+	ID     int64
+	At     time.Time
+	Actor  string // the operator's username
+	Action string // "breaker.reset", "channel.save", "channel.delete"
+	Target string // the channel name, where there is one
+	Detail string // what changed, in one line
+}
+
+// AdminAudit stores the operator action trail.
+type AdminAudit interface {
+	// RecordAdminAction appends an entry.
+	RecordAdminAction(ctx context.Context, a *AdminAction) error
+	// ListAdminActions returns the most recent entries, newest first.
+	ListAdminActions(ctx context.Context, limit int) ([]*AdminAction, error)
+	// PruneAdminActions deletes entries older than the cutoff.
+	PruneAdminActions(ctx context.Context, before time.Time) (int, error)
 }

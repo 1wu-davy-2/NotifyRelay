@@ -21,6 +21,7 @@ import (
 	// channel type is one new package plus one line in internal/channel/all.
 	_ "notifyrelay/internal/channel/all"
 
+	"notifyrelay/internal/admin"
 	"notifyrelay/internal/api"
 	"notifyrelay/internal/audit"
 	"notifyrelay/internal/auth"
@@ -208,7 +209,20 @@ func run() error {
 		IdempotencyRetention:   cfg.Queue.IdempotencyRetention.Std(),
 	})
 
+	// The operator surface, when configured. It is built before the API handler
+	// because the API mounts it; when disabled the constructor returns nil and
+	// nothing is mounted.
+	adminHandler := admin.NewHandler(admin.Deps{
+		Config:   cfg.Admin,
+		Channels: channelSource,
+		Breakers: breakers,
+		Router:   rtr,
+		Audit:    persistence,
+		Log:      log,
+	})
+
 	handler := api.NewHandler(api.Deps{
+		Admin:          adminHandler,
 		Keys:           keys,
 		Log:            log,
 		Router:         rtr,

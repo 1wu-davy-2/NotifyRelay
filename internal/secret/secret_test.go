@@ -37,16 +37,6 @@ func TestSealOpen_RoundTrip(t *testing.T) {
 		if !IsSealed(sealed) {
 			t.Errorf("Seal(%q) = %q, which is not marked as sealed", plain, sealed)
 		}
-		// Decoded, not as printed. A short plaintext like "a" turns up inside
-		// base64 output by chance, and a test that fails on coincidence is a
-		// test somebody deletes.
-		raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(sealed, "v1:"))
-		if err != nil {
-			t.Fatalf("Seal produced something that is not base64: %v", err)
-		}
-		if bytes.Contains(raw, []byte(plain)) {
-			t.Errorf("the plaintext is visible in the ciphertext of %q", plain)
-		}
 
 		got, err := c.Open(sealed)
 		if err != nil {
@@ -54,6 +44,39 @@ func TestSealOpen_RoundTrip(t *testing.T) {
 		}
 		if got != plain {
 			t.Errorf("Open(Seal(%q)) = %q", plain, got)
+		}
+	}
+}
+
+// A credential must not be readable in what gets stored.
+//
+// The check is on the decoded bytes, and only for values long enough for the
+// answer to mean something: a one-character plaintext turns up inside a
+// thirty-byte ciphertext about one time in ten, so asserting its absence would
+// be a test that fails at random and gets deleted rather than fixed.
+func TestSeal_TheCredentialIsNotReadableInTheCiphertext(t *testing.T) {
+	c := testCipher(t, testKey(t))
+
+	for _, plain := range []string{
+		"hunter2-super-secret-value",
+		"https://hooks.slack.com/services/T00/B00/XXXXXXXXXXXX",
+		"a-16-byte-secret",
+		strings.Repeat("x", 4096),
+	} {
+		sealed, err := c.Seal(plain)
+		if err != nil {
+			t.Fatalf("Seal: %v", err)
+		}
+
+		raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(sealed, "v1:"))
+		if err != nil {
+			t.Fatalf("Seal produced something that is not base64: %v", err)
+		}
+		if bytes.Contains(raw, []byte(plain)) {
+			t.Errorf("the plaintext %q is readable in the ciphertext", plain)
+		}
+		if strings.Contains(sealed, plain) {
+			t.Errorf("the plaintext %q is readable in the encoded value", plain)
 		}
 	}
 }

@@ -132,12 +132,18 @@ type BreakerConfig struct {
 // It lives on the instance rather than in the channel's own config block
 // because it is an operational limit on this deployment's use of the channel,
 // not a property of the channel type.
+// The json tags are not decoration. This struct crosses the admin API as well
+// as the configuration file, and without them encoding/json matches on the Go
+// field name — so "per_minute" would be an unknown field, the request would be
+// rejected, and there would be no way to set a quota from the operator UI at
+// all. The yaml and json names being identical is the point: one name for one
+// setting, whichever way it arrives.
 type QuotaConfig struct {
-	PerSecond int `yaml:"per_second"`
-	PerMinute int `yaml:"per_minute"`
-	PerHour   int `yaml:"per_hour"`
-	PerDay    int `yaml:"per_day"`
-	PerMonth  int `yaml:"per_month"`
+	PerSecond int `yaml:"per_second" json:"per_second"`
+	PerMinute int `yaml:"per_minute" json:"per_minute"`
+	PerHour   int `yaml:"per_hour" json:"per_hour"`
+	PerDay    int `yaml:"per_day" json:"per_day"`
+	PerMonth  int `yaml:"per_month" json:"per_month"`
 }
 
 // StorageConfig says where deliveries are persisted.

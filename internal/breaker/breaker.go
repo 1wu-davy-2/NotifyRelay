@@ -127,6 +127,19 @@ func NewManager(settings Settings, store Store, log *slog.Logger) *Manager {
 	}
 }
 
+// Reset returns a channel's breaker to closed, reporting the state it replaced.
+//
+// It goes through For rather than looking the breaker up, and that is not an
+// implementation detail. A breaker is only loaded from the store when something
+// asks for it, so a channel this process has not delivered to yet has no
+// in-memory breaker — while the store may well hold "open" left by the previous
+// run. Resetting the absence would clear nothing, the next delivery would load
+// the old state, and the button would appear not to work. For loads it first,
+// so what gets overwritten is the real state.
+func (m *Manager) Reset(ctx context.Context, channelName string, now time.Time) State {
+	return m.For(channelName).Reset(ctx, now)
+}
+
 // For returns the breaker for a channel, creating it on first use.
 func (m *Manager) For(channelName string) *Breaker {
 	m.mu.Lock()
@@ -349,6 +362,38 @@ func (b *Breaker) persist(ctx context.Context, now time.Time) {
 		b.log.Warn("breaker: could not persist state",
 			slog.String("channel", b.channel), slog.String("error", err.Error()))
 	}
+}
+
+// Reset returns the breaker to closed, immediately.
+//
+// The state is persisted rather than only cleared in memory, and that is the
+// whole point of having this at all. Breaker state is written through so a
+// restart does not forget an outage — which is right during the outage and
+// wrong once somebody has established that the downstream is healthy again. A
+// reset that lived only in memory would be undone by the next restart, and the
+// operator would conclude the button does not work.
+//
+// It touches nothing else. The queue is not drained and no allowance is
+// returned: this answers "try again", not "pretend the last hour did not
+// happen". Rolling those together would make the quota meaningless.
+// The previous state is returned so the caller can record what was overridden.
+// An operator turning off an automatic protection is exactly the kind of action
+// somebody asks about later, and "it was open, with 47 consecutive failures"
+// answers the question that "it was reset" does not.
+func (b *Breaker) Reset(ctx context.Context, now time.Time) State {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.load(ctx)
+
+	was := b.state
+	b.transition(ctx, StateClosed, now)
+
+	b.log.Warn("breaker: reset by an operator",
+		slog.String("channel", b.channel),
+		slog.String("was", string(was)),
+	)
+	return was
 }
 
 // Snapshot returns the current state, for tests and the admin surface.

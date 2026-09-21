@@ -41,6 +41,15 @@ type Deps struct {
 	Idempotency IdempotencyStore
 	// Metrics, when set, instruments the HTTP layer.
 	Metrics *metrics.Metrics
+
+	// Admin is the operator surface, mounted under /admin. When nil the
+	// service has no management interface at all, which is the default.
+	//
+	// It is an http.Handler rather than a set of dependencies because it
+	// authenticates differently — a session cookie rather than a bearer key —
+	// and the two must not be able to reach into each other's middleware. The
+	// type is the boundary.
+	Admin http.Handler
 }
 
 // NewHandler builds the HTTP handler with every route registered.
@@ -62,6 +71,14 @@ func NewHandler(d Deps) http.Handler {
 	// operator who wants it private already knows how.
 	if d.Metrics != nil {
 		r.Handle("/metrics", d.Metrics.Handler())
+	}
+
+	// The operator surface brings its own authentication, its own CSRF rule and
+	// its own security headers. Mounting it outside the bearer group is what
+	// keeps a session cookie from ever satisfying the notification API, and an
+	// API key from ever reaching the admin routes.
+	if d.Admin != nil {
+		r.Mount("/admin", d.Admin)
 	}
 
 	r.Group(func(pr chi.Router) {

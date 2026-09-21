@@ -1,0 +1,243 @@
+// Package admin is the operator surface: the API the management UI is built on.
+//
+// It is a separate package from internal/api because it is a separate trust
+// boundary. The notification API is authenticated by a bearer key that a
+// service holds and uses to send messages; this one is authenticated by a
+// session that a person holds and uses to reconfigure where those messages go.
+// Sharing a package would make it easy to add a route to the wrong one.
+package admin
+
+import (
+	"context"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+
+	"notifyrelay/internal/auth"
+	"notifyrelay/internal/breaker"
+	"notifyrelay/internal/config"
+	"notifyrelay/internal/router"
+	"notifyrelay/internal/store"
+)
+
+// csrfHeader is required on every state-changing request.
+//
+// SameSite=Lax already stops a cross-site POST from carrying the session
+// cookie, and this is the second lock on the same door: a cross-origin script
+// cannot set a custom header without a CORS preflight, and this server never
+// answers one. Two independent defences, neither of which is a token the UI has
+// to store and rotate.
+const csrfHeader = "X-NotifyRelay-Admin"
+
+// Deps is what the operator surface needs.
+type Deps struct {
+	// Config carries the operator's username, password hash and session TTL.
+	Config config.AdminConfig
+	// Channels reads and writes the stored channel instances.
+	Channels *config.ChannelSource
+	// Breakers is reset on request. Optional.
+	Breakers *breaker.Manager
+	// Router is reloaded after a configuration change. Optional, and without it
+	// a saved channel does not take effect until a restart.
+	Router *router.Router
+	// Audit records what operators did. Optional.
+	Audit store.AdminAudit
+	Log   *slog.Logger
+}
+
+type handler struct {
+	deps     Deps
+	log      *slog.Logger
+	password auth.PasswordHash
+	sessions *sessions
+	limiter  *loginLimiter
+}
+
+// NewHandler builds the operator API.
+//
+// It returns nil when the admin surface is disabled, so a caller can pass the
+// result straight through without branching.
+func NewHandler(d Deps) http.Handler {
+	if !d.Config.Enabled {
+		return nil
+	}
+
+	log := d.Log
+	if log == nil {
+		log = slog.Default()
+	}
+
+	// Configuration validation already refuses a half-configured admin block,
+	// so a parse failure here is a bug rather than an operator mistake — and it
+	// must not degrade into "start anyway without a password check".
+	hash, err := auth.ParsePasswordHash(d.Config.PasswordHash)
+	if err != nil {
+		log.Error("admin: the configured password hash is unusable; the admin surface will refuse every login",
+			slog.String("error", err.Error()))
+	}
+
+	h := &handler{
+		deps:     d,
+		log:      log,
+		password: hash,
+		sessions: newSessions(d.Config.SessionTTL.Std()),
+		limiter:  newLoginLimiter(),
+	}
+
+	r := chi.NewRouter()
+	r.Use(h.securityHeaders)
+
+	r.Post("/api/login", h.login)
+	r.Post("/api/logout", h.logout)
+
+	r.Group(func(pr chi.Router) {
+		pr.Use(h.requireSession)
+
+		pr.Get("/api/session", h.whoami)
+
+		pr.Get("/api/channels", h.listChannels)
+		pr.Get("/api/channels/types", h.channelTypes)
+		pr.Post("/api/channels", h.saveChannel)
+		pr.Get("/api/channels/{name}", h.getChannel)
+		pr.Delete("/api/channels/{name}", h.deleteChannel)
+		pr.Post("/api/channels/{name}/test", h.testChannel)
+		pr.Post("/api/channels/{name}/breaker/reset", h.resetBreaker)
+
+		pr.Get("/api/audit", h.listAudit)
+	})
+
+	return r
+}
+
+// securityHeaders are the ones that cost nothing and are forgotten most often.
+func (h *handler) securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The operator UI is same-origin and loads nothing external. Saying so
+		// means a mistake that introduces a remote script fails visibly rather
+		// than quietly running with the session cookie in reach.
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; "+
+				"frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		// A management UI is never meant to be framed, and this is the header
+		// that browsers still honour.
+		w.Header().Set("X-Frame-Options", "DENY")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requireSession rejects anything without a live session, and anything that
+// changes state without the CSRF header.
+func (h *handler) requireSession(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie(cookieName)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "unauthenticated", "sign in first")
+			return
+		}
+
+		actor, ok := h.sessions.lookup(cookie.Value)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "unauthenticated", "the session has expired")
+			return
+		}
+
+		if isStateChanging(r.Method) && r.Header.Get(csrfHeader) == "" {
+			writeError(w, http.StatusForbidden, "missing_csrf_header",
+				"state-changing requests must carry the "+csrfHeader+" header")
+			return
+		}
+
+		next.ServeHTTP(w, r.WithContext(withActor(r.Context(), actor)))
+	})
+}
+
+func isStateChanging(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	default:
+		return true
+	}
+}
+
+type actorKey struct{}
+
+func withActor(ctx context.Context, actor string) context.Context {
+	return context.WithValue(ctx, actorKey{}, actor)
+}
+
+func actorFrom(ctx context.Context) string {
+	actor, _ := ctx.Value(actorKey{}).(string)
+	return actor
+}
+
+// record writes an operator action to the audit trail.
+//
+// A failure here is logged and otherwise ignored: refusing the action because
+// the audit write failed would make the trail a availability dependency, and
+// the action itself has already been decided on. The log line is the fallback,
+// and it is the reason this is not silent.
+func (h *handler) record(ctx context.Context, action, target, detail string) {
+	if h.deps.Audit == nil {
+		return
+	}
+	err := h.deps.Audit.RecordAdminAction(ctx, &store.AdminAction{
+		At:     time.Now().UTC(),
+		Actor:  actorFrom(ctx),
+		Action: action,
+		Target: target,
+		Detail: detail,
+	})
+	if err != nil {
+		h.log.Error("admin: could not record an operator action",
+			slog.String("action", action),
+			slog.String("target", target),
+			slog.String("error", err.Error()),
+		)
+	}
+}
+
+// ------------------------------------------------------------------ responses
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	if v == nil {
+		return
+	}
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+type errorBody struct {
+	Error   string `json:"error"`
+	Message string `json:"message"`
+}
+
+func writeError(w http.ResponseWriter, status int, code, message string) {
+	writeJSON(w, status, errorBody{Error: code, Message: message})
+}
+
+// decode reads a JSON body with the limits a request from a browser needs.
+func decode(w http.ResponseWriter, r *http.Request, v any) error {
+	const maxBody = 1 << 20
+
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
+	dec.DisallowUnknownFields()
+	return dec.Decode(v)
+}
+
+// cookieSecure reports whether to mark the session cookie Secure.
+//
+// Decided from the request rather than from configuration: this service is
+// commonly deployed behind a TLS-terminating proxy, and a cookie marked Secure
+// on a plain-HTTP internal address would simply never be sent, which presents
+// as "the login page does not work" rather than as a security setting.
+func cookieSecure(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
