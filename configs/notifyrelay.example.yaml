@@ -61,6 +61,35 @@ queue:
   failed_retention: 720h    # 30 days
   idempotency_retention: 24h
 
+# Seals credential values in the channel configuration stored in the database.
+#
+# Optional, and required the moment you store a credential: a deployment with no
+# secrets needs no key, and one that has a secret and no key is refused rather
+# than written in the clear. Generate one with:
+#
+#   notifyrelay --gen-key
+#
+# Losing this key means losing every credential sealed with it — back it up
+# wherever you keep the database's backups, and somewhere else as well.
+# secret_key: !env NOTIFYRELAY_SECRET_KEY
+
+# The operator API and UI.
+#
+# Left disabled by default. Enabling it without a password hash, a session key
+# and a bound-to-internal address is how a notification relay becomes a way into
+# the network it is supposed to be reporting on.
+admin:
+  enabled: false
+  # username: admin
+  # Generate the hash with:
+  #   notifyrelay --hash-password 'your-password'
+  # Only the hash is stored; there is no field for a plaintext password.
+  # password_hash: "$argon2id$v=19$m=65536,t=3,p=1$..."
+  # Must be a different value from secret_key. One key serving two purposes
+  # means a weakness in the weaker use is a weakness in both.
+  # session_key: !env NOTIFYRELAY_SESSION_KEY
+  session_ttl: 12h
+
 auth:
   api_keys:
     # Generate the digest for a token with:
@@ -119,6 +148,12 @@ smtp_in:
 # Channel instances live here. Each entry needs a `name` (the alias used in API
 # targets and in SMTP recipient local parts) and a `type` (a channel type
 # registered in this binary; run with an unknown type to see the list).
+#
+# This block seeds the database ONCE, on the first boot of a build that stores
+# channel configuration there. After that the database is authoritative and this
+# block is ignored — so an operator who deletes a channel in the UI does not
+# find it back after the next restart. The marker that records this lives in the
+# `meta` table; deleting that row is how you ask for the import to happen again.
 #
 # Nothing is configured by default. An empty list makes the service start with
 # a warning and fail every delivery, which is visible; a wrong type fails

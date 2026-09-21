@@ -116,6 +116,84 @@ type BreakerState struct {
 	UpdatedAt   time.Time
 }
 
+// ChannelInstance is one configured channel, as persisted.
+//
+// It exists so that channel configuration can live in the database rather than
+// in a file: the file has to be edited by hand and the service restarted, which
+// is not a thing to ask of whoever is on call at three in the morning.
+//
+// Config holds the channel's own parameter block verbatim. The store does not
+// interpret it — not the parameter names, and not which of them are sealed —
+// because the schema that knows those things lives with the channel
+// implementation, and a store that understood it would have to be updated every
+// time a channel was added. Sealing is the caller's job; see internal/config.
+type ChannelInstance struct {
+	Name    string
+	Type    string
+	Enabled bool
+	Config  map[string]any
+	Quota   Quota
+	// CreatedAt and UpdatedAt are set by the store, not by the caller.
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// Quota is a channel instance's send allowance. Zero means unlimited.
+//
+// It is a copy of the configuration shape rather than an import of it: the
+// config package loads channel instances out of this store, so the store cannot
+// depend on config without a cycle. Five integers are cheaper than a cycle.
+type Quota struct {
+	PerSecond int
+	PerMinute int
+	PerHour   int
+	PerDay    int
+	PerMonth  int
+}
+
+// Meta stores small facts about the database itself, as opposed to
+// configuration or delivery state.
+//
+// It is deliberately untyped: what goes in it is a decision for whoever needs
+// it, and a store that grew a field every time something needed remembering
+// would be a store that changes shape for reasons that have nothing to do with
+// persistence.
+type Meta interface {
+	// GetMeta returns a value, and whether it was set.
+	GetMeta(ctx context.Context, key string) (string, bool, error)
+	// SetMeta writes a value.
+	SetMeta(ctx context.Context, key, value string) error
+}
+
+// MetaKeys are the facts this service keeps.
+const (
+	// MetaChannelsImported records that the configuration file's `channels:`
+	// block has been copied into the database.
+	//
+	// Its presence, not the emptiness of the channel table, is what stops a
+	// second import: an operator who deletes every channel must not find them
+	// all back after a restart.
+	MetaChannelsImported = "channels_imported_at"
+)
+
+// Channels stores the configured channel instances.
+type Channels interface {
+	// ListChannels returns every configured instance, by name.
+	ListChannels(ctx context.Context) ([]*ChannelInstance, error)
+
+	// GetChannel returns one instance, or nil when there is no such instance.
+	GetChannel(ctx context.Context, name string) (*ChannelInstance, error)
+
+	// PutChannel creates or replaces an instance.
+	PutChannel(ctx context.Context, ci *ChannelInstance) error
+
+	// DeleteChannel removes an instance, reporting whether it existed.
+	DeleteChannel(ctx context.Context, name string) (bool, error)
+
+	// CountChannels reports how many instances exist.
+	CountChannels(ctx context.Context) (int, error)
+}
+
 // Filter narrows a delivery query.
 type Filter struct {
 	Status    Status
@@ -255,6 +333,8 @@ type Store interface {
 	Idempotency
 	Breakers
 	Quotas
+	Channels
+	Meta
 
 	// Ping reports whether the store is usable, for the readiness probe.
 	Ping(ctx context.Context) error

@@ -31,6 +31,7 @@ import (
 	"notifyrelay/internal/queue"
 	"notifyrelay/internal/quota"
 	"notifyrelay/internal/router"
+	"notifyrelay/internal/secret"
 	"notifyrelay/internal/smtpin"
 	"notifyrelay/internal/store"
 	"notifyrelay/internal/store/spool"
@@ -52,6 +53,9 @@ func main() {
 func run() error {
 	configPath := flag.String("config", "configs/notifyrelay.yaml", "path to the configuration file")
 	hashKey := flag.String("hash-key", "", "print the config representation of an API key's digest and exit")
+	genKey := flag.Bool("gen-key", false, "print a new secret_key and exit")
+	hashPassword := flag.String("hash-password", "", "print an admin password_hash and exit")
+	sealValue := flag.String("seal-value", "", "seal a value with secret_key from the configuration file and exit")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 
@@ -63,10 +67,46 @@ func run() error {
 		fmt.Println(auth.HashAPIKey(*hashKey))
 		return nil
 	}
+	if *genKey {
+		_, encoded, err := secret.GenerateKey()
+		if err != nil {
+			return err
+		}
+		fmt.Println(encoded)
+		return nil
+	}
+	if *hashPassword != "" {
+		// Read from a flag rather than a prompt: this runs on a workstation
+		// while preparing a configuration file, and a value on the command line
+		// ends up in the shell history either way. What matters is that the
+		// *hash* is what gets written down.
+		encoded, err := auth.HashPassword(*hashPassword)
+		if err != nil {
+			return err
+		}
+		fmt.Println(encoded)
+		return nil
+	}
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		return err
+	}
+
+	if *sealValue != "" {
+		cipher, err := cfg.Cipher()
+		if err != nil {
+			return err
+		}
+		if cipher == nil {
+			return errors.New("secret_key is not set in the configuration file")
+		}
+		sealed, err := cipher.Seal(*sealValue)
+		if err != nil {
+			return err
+		}
+		fmt.Println(sealed)
+		return nil
 	}
 
 	log := newLogger(cfg.Log)
@@ -118,8 +158,26 @@ func run() error {
 		}, persistence, log)
 	}
 
+	// Channel instances come from the database, seeded once from the file. The
+	// file's `channels:` block is read only while the database has never been
+	// configured; see config.ChannelSource for why that rule has to be a
+	// recorded fact rather than an inference.
+	cipher, err := cfg.Cipher()
+	if err != nil {
+		return err
+	}
+	channelSource := config.NewChannelSource(persistence, cipher, log)
+
+	if _, err := channelSource.ImportOnce(ctx, cfg.Channels); err != nil {
+		return err
+	}
+	configured, err := channelSource.Load(ctx)
+	if err != nil {
+		return err
+	}
+
 	rtr, err := router.New(router.Options{
-		Channels:       cfg.Channels,
+		Channels:       configured,
 		DeliverTimeout: cfg.Timeouts.Deliver.Std(),
 		Audit:          recorder,
 		Breaker:        breakers,

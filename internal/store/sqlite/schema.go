@@ -104,4 +104,33 @@ CREATE TABLE IF NOT EXISTS quota_counters (
 
 CREATE INDEX IF NOT EXISTS idx_quota_counters_updated
     ON quota_counters (updated_at);
+
+-- Small key/value facts about this database that are not configuration.
+--
+-- Today it holds one: whether the configuration file's channels block has
+-- already been imported. The obvious alternative — treating an empty
+-- channel_instances table as "never imported" — is wrong in the one case that
+-- matters: an operator who deletes every channel on purpose gets them all back
+-- at the next restart, forever, and stops trusting the UI.
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+-- Channel configuration, so it can be edited without restarting the service.
+--
+-- config_json holds the channel's own parameter block. Values the channel
+-- declares private are sealed by the writer before they get here, so this
+-- column contains ciphertext for exactly those fields and readable text for the
+-- rest — which is what makes a database dump safe to attach to a ticket, and
+-- still useful once it is there.
+CREATE TABLE IF NOT EXISTS channel_instances (
+    name        TEXT    PRIMARY KEY,
+    type        TEXT    NOT NULL,
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    config_json TEXT    NOT NULL DEFAULT '{}',
+    quota_json  TEXT    NOT NULL DEFAULT '{}',
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
 `

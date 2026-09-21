@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"notifyrelay/internal/auth"
+	"notifyrelay/internal/secret"
 )
 
 // Duration is a time.Duration that unmarshals from a YAML string such as "30s".
@@ -57,7 +58,58 @@ type Config struct {
 	Retry    RetryConfig     `yaml:"retry"`
 	Breaker  BreakerConfig   `yaml:"circuit_breaker"`
 	SMTPIn   SMTPInConfig    `yaml:"smtp_in"`
+	Admin    AdminConfig     `yaml:"admin"`
+
+	// SecretKey seals credential values in the channel configuration stored in
+	// the database. Write it as `!env NOTIFYRELAY_SECRET_KEY`.
+	//
+	// It is optional, and required the moment you store a credential: a
+	// deployment with no secrets needs no key, and one that has a secret and no
+	// key is refused rather than written in the clear. Generate one with
+	// `notifyrelay --gen-key`.
+	SecretKey string `yaml:"secret_key"`
+
+	// Channels seeds the database on first boot. See ChannelSource: the file is
+	// read only while the database is empty, and the database is authoritative
+	// from then on.
 	Channels []ChannelConfig `yaml:"channels"`
+}
+
+// Cipher builds the value cipher from secret_key, or returns nil when no key is
+// configured.
+//
+// Nil is a legitimate answer, not a failure: a deployment with no credentials
+// to store needs no key, and the refusal happens later, at the moment a
+// credential would actually be written in the clear. Failing at startup instead
+// would force a key on every deployment whether or not it had a secret to keep.
+func (c *Config) Cipher() (*secret.Cipher, error) {
+	if strings.TrimSpace(c.SecretKey) == "" {
+		return nil, nil
+	}
+	key, err := secret.ParseKey(c.SecretKey)
+	if err != nil {
+		return nil, fmt.Errorf("secret_key: %w", err)
+	}
+	return secret.NewCipher(key)
+}
+
+// AdminConfig enables the operator API and UI.
+type AdminConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// Username names the single operator account.
+	Username string `yaml:"username"`
+	// PasswordHash is an argon2id hash, produced by `notifyrelay --hash-password`.
+	// A plaintext password here is not accepted; there is no field for one.
+	PasswordHash string `yaml:"password_hash"`
+	// SessionKey signs session cookies. Write it as `!env NOTIFYRELAY_SESSION_KEY`.
+	//
+	// It must be a different key from SecretKey, and from every API key digest.
+	// One key serving two purposes means a weakness in the weaker use is a
+	// weakness in both — and the two uses here have nothing in common except
+	// being "a secret".
+	SessionKey string `yaml:"session_key"`
+	// SessionTTL is how long a login lasts. Defaults to 12 hours.
+	SessionTTL Duration `yaml:"session_ttl"`
 }
 
 // BreakerConfig tunes the per-channel circuit breaker.
@@ -235,6 +287,12 @@ func defaultConfig() Config {
 			Addr:     ":2525",
 			Hostname: "relay.local",
 		},
+		Admin: AdminConfig{
+			// Twelve hours: a working day. Long enough not to interrupt
+			// somebody mid-incident, short enough that a session cookie lifted
+			// from a shared machine is not useful the next morning.
+			SessionTTL: Duration(12 * time.Hour),
+		},
 		Storage: StorageConfig{
 			Driver:   "sqlite",
 			Path:     "data/notifyrelay.db",
@@ -381,6 +439,45 @@ func (c *Config) Validate() error {
 	}
 	if strings.TrimSpace(c.Storage.SpoolDir) == "" {
 		errs = append(errs, errors.New("storage.spool_dir is required"))
+	}
+
+	// The admin surface is the one place a mistake here turns into a remote
+	// takeover of the notification system, so a half-configured admin block is
+	// refused rather than started with a hole in it.
+	if c.Admin.Enabled {
+		if strings.TrimSpace(c.Admin.Username) == "" {
+			errs = append(errs, errors.New("admin.username is required when admin is enabled"))
+		}
+		if strings.TrimSpace(c.Admin.PasswordHash) == "" {
+			errs = append(errs, errors.New(
+				"admin.password_hash is required when admin is enabled "+
+					"(generate one with `notifyrelay --hash-password`)"))
+		} else if _, err := auth.ParsePasswordHash(c.Admin.PasswordHash); err != nil {
+			errs = append(errs, fmt.Errorf("admin.password_hash: %w", err))
+		}
+		if strings.TrimSpace(c.Admin.SessionKey) == "" {
+			errs = append(errs, errors.New(
+				"admin.session_key is required when admin is enabled "+
+					"(write `session_key: !env NOTIFYRELAY_SESSION_KEY`)"))
+		}
+		if c.Admin.SessionTTL <= 0 {
+			errs = append(errs, errors.New("admin.session_ttl must be greater than zero"))
+		}
+
+		// Two purposes, two keys. Deriving both from one value is how a
+		// weakness in whichever use is weaker becomes a weakness in both, and
+		// these two have nothing in common except being secret.
+		if c.SecretKey != "" && c.Admin.SessionKey == c.SecretKey {
+			errs = append(errs, errors.New(
+				"admin.session_key must not be the same value as secret_key: "+
+					"one key must not serve two purposes"))
+		}
+	}
+
+	if c.SecretKey != "" {
+		if _, err := secret.ParseKey(c.SecretKey); err != nil {
+			errs = append(errs, fmt.Errorf("secret_key: %w", err))
+		}
 	}
 
 	if c.Queue.Workers < 1 {
