@@ -1,0 +1,16 @@
+# Keep the build context small. NOTICE, LICENSE, configs/ and docs/ are
+# deliberately NOT excluded: the Dockerfile copies NOTICE and LICENSE into the
+# image, which the AGPL requires to travel with the binary.
+
+.git
+.gitignore
+.idea
+.vscode
+
+bin/
+*.exe
+*.test
+
+# Local secrets must never enter a build context.
+.env
+configs/notifyrelay.yaml

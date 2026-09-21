@@ -1,0 +1,18 @@
+# Normalize line endings in the repository to LF, whatever the working copy
+# uses. Go, YAML and Markdown are all happier with LF, and a repository that
+# stores CRLF produces a diff on every file the first time somebody builds on
+# Linux.
+* text=auto eol=lf
+
+# PowerShell scripts are the exception: Windows PowerShell 5.1 mis-parses a
+# script whose lines end in a bare LF in some hosting scenarios.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files must not be touched at all.
+*.png binary
+*.jpg binary
+*.ico binary
+*.exe binary
+*.db binary

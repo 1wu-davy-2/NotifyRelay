@@ -1,0 +1,22 @@
+# Build output
+/bin/
+*.exe
+*.test
+*.out
+
+# Local configuration (may contain secrets)
+/configs/notifyrelay.yaml
+.env
+
+# Data (M4+)
+/data/
+*.db
+*.db-journal
+*.spool/
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

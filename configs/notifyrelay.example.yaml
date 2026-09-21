@@ -1,0 +1,223 @@
+# NotifyRelay configuration.
+#
+# Secrets never belong in this file. Write `!env NAME` and the value is read
+# from the environment at startup. A missing variable fails startup loudly
+# instead of silently becoming an empty credential.
+
+log:
+  level: info    # debug | info | warn | error
+  format: json   # json | text
+
+server:
+  addr: ":8080"
+
+# Three layers of timeouts.
+#
+#   read / read_header / write / idle : the http.Server itself
+#   handler : one whole /api/v1/notify request, including fan-out to every target
+#   deliver : a single target's Channel.Send
+#
+# handler MUST be greater than deliver, otherwise fan-out is cut off
+# mid-flight. Validation enforces this and refuses to start otherwise.
+timeouts:
+  read: 15s
+  read_header: 5s
+  write: 30s
+  idle: 60s
+  handler: 20s
+  deliver: 15s
+
+# Where deliveries are persisted.
+#
+# `driver` is named explicitly even though sqlite is the only implementation
+# today: this field is the seam a later MySQL or PostgreSQL deployment
+# announces itself through.
+storage:
+  driver: sqlite
+  path: data/notifyrelay.db
+  # Message bodies are written here as files rather than into the database, so
+  # the queue table stays small enough to update quickly.
+  spool_dir: data/spool
+
+# The delivery workers.
+queue:
+  workers: 4
+  batch: 16
+  poll_every: 1s
+  deliver_timeout: 30s
+  # How long a delivery waits after being returned to the queue because no
+  # channel could accept it. Releasing as immediately due would spin.
+  release_delay: 30s
+  # How long a claim is good for. A delivery still in flight after this is
+  # returned to the queue, whether or not anything crashed — which is what
+  # makes the sweep independent of a restart. MUST exceed deliver_timeout, or
+  # a slow delivery is mistaken for an abandoned one and sent twice.
+  claim_timeout: 5m
+  # How often the sweep for expired claims runs. Defaults to claim_timeout/3.
+  recover_every: 100s
+
+  prune_every: 1h
+  sent_retention: 168h      # 7 days
+  failed_retention: 720h    # 30 days
+  idempotency_retention: 24h
+
+auth:
+  api_keys:
+    # Generate the digest for a token with:
+    #   notifyrelay --hash-key 'your-token'
+    # Only the digest is stored; the token itself is never written down.
+    - name: internal-services
+      key_hash: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      enabled: true
+
+retry:
+  max_attempts: 5
+  # Fixed increasing intervals, deliberately not exponential backoff: mail
+  # failures are dominated by greylisting and temporary 4xx, where the first
+  # few exponential steps are far too dense to be useful.
+  #
+  # Only a TRANSIENT failure spends an attempt. A channel that cannot be
+  # reached is released back to the queue without charge, and max_age is what
+  # stops that from going on forever.
+  backoff: [30s, 2m, 10m, 1h, 4h]
+  max_age: 24h
+
+# A channel that keeps failing is taken out of service, so deliveries fail
+# fast instead of each one waiting out a connect timeout.
+#
+# The state is written to the database: a restart must not forget an outage
+# that is still in progress. The restart is often part of the incident.
+circuit_breaker:
+  enabled: true
+  # Consecutive TRANSIENT or CONNECT_ERROR results that open a channel.
+  # A PERMANENT rejection never counts — the endpoint answered, so the problem
+  # is the message, not the channel. Counting it would let one bad recipient
+  # address take the whole channel down.
+  failure_threshold: 5
+  # Half-open probes that must succeed to close it again.
+  success_threshold: 2
+  # How long to stay open before admitting probes.
+  open_timeout: 60s
+  # Probes allowed in flight at once while half-open. A channel that has just
+  # come back should be tested, not handed the backlog.
+  half_open_probes: 1
+
+smtp_in:
+  enabled: false
+  addr: ":2525"
+  hostname: relay.local
+  # CIDRs allowed to relay. Empty allows every source — development only.
+  allowed_ips: []
+  auth:
+    enabled: false
+    username: ""
+    # Uncomment and set SMTP_IN_PASSWORD in the environment to enable SMTP AUTH.
+    # An uncommented `!env` whose variable is unset will refuse to start, which
+    # is why this line is commented out in the shipped example.
+    # password: !env SMTP_IN_PASSWORD
+
+# Channel instances live here. Each entry needs a `name` (the alias used in API
+# targets and in SMTP recipient local parts) and a `type` (a channel type
+# registered in this binary; run with an unknown type to see the list).
+#
+# Nothing is configured by default. An empty list makes the service start with
+# a warning and fail every delivery, which is visible; a wrong type fails
+# startup outright.
+channels: []
+
+# Example: an email channel through an upstream SMTP relay.
+#
+# channels:
+#   - name: oncall                 # alias: POST targets ["oncall"], or mail to oncall@relay.local
+#     type: email
+#     enabled: true
+#     # This instance's send allowance. Zero means unlimited. A delivery that
+#     # cannot get a slot goes back to the queue rather than failing, and a
+#     # call that never reached the endpoint is not charged for.
+#     quota:
+#       per_second: 5
+#       per_minute: 100
+#       per_hour: 1000
+#       per_day: 5000       # persisted; survives a restart
+#       per_month: 100000
+#     config:
+#       host: smtp.example.com
+#       port: 587                  # 465 infers implicit TLS, anything else STARTTLS
+#       # tls: starttls            # only needed to override the port inference
+#       username: notify@example.com
+#       password: !env SMTP_PASSWORD
+#       from: "NotifyRelay <notify@example.com>"
+#       to:
+#         - ops@example.com        # each recipient is delivered independently
+#       # auth_type: auto          # auto | plain | login | cram-md5
+#       # ca_file: /etc/ssl/private-ca.pem
+#       # subject_template: "[{type}] {title}"
+#       # timeout: 10s
+#
+# Example: post JSON to any HTTP endpoint.
+#
+# channels:
+#   - name: hook
+#     type: webhook
+#     config:
+#       url: https://example.com/notify
+#       auth_type: hmac              # none | bearer | basic | header | hmac
+#       secret: !env WEBHOOK_SECRET  # sent as X-Signature: <hex hmac-sha256 of the body>
+#       # payload_template: '{"text": "{title}: {body}"}'
+#       # body_max_len: 4000         # 0 or absent means no limit
+#       # overflow_mode: split       # error | truncate | split
+#       # rate_per_sec: 5
+#
+# Example: Slack.
+#
+# channels:
+#   - name: alerts
+#     type: slack
+#     config:
+#       webhook_url: !env SLACK_WEBHOOK_URL
+#       # ...or with a bot token instead:
+#       # token: !env SLACK_TOKEN
+#       # channel: "#alerts"
+#
+# Example: DingTalk group robot.
+#
+# channels:
+#   - name: dingtalk-ops
+#     type: dingtalk
+#     config:
+#       webhook_url: !env DINGTALK_WEBHOOK
+#       secret: !env DINGTALK_SECRET     # optional; when set, requests are signed
+#       at_mobiles: ["13800000000"]      # optional @-mentions
+#       # msg_type: markdown             # markdown | text
+#
+# Example: Feishu custom bot.
+#
+# channels:
+#   - name: feishu-ops
+#     type: feishu
+#     config:
+#       webhook_url: !env FEISHU_WEBHOOK
+#       secret: !env FEISHU_SECRET       # optional; when set, requests are signed
+#       # msg_type: interactive          # interactive (card) | text
+#
+# Example: WeCom. Two modes — a group robot, or an application that can
+# address users and departments.
+#
+# channels:
+#   - name: wecom-ops
+#     type: wecom
+#     config:
+#       mode: webhook
+#       webhook_url: !env WECOM_WEBHOOK
+#
+#   - name: wecom-app
+#     type: wecom
+#     config:
+#       mode: app
+#       corp_id: !env WECOM_CORP_ID
+#       corp_secret: !env WECOM_CORP_SECRET
+#       agent_id: 1000002
+#       to_user: "@all"                  # or "alice|bob"
+#
+# Behind a TLS-inspecting proxy or a private CA, any HTTP channel accepts:
+#       ca_file: /etc/ssl/private-ca.pem

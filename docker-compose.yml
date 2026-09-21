@@ -1,0 +1,25 @@
+services:
+  notifyrelay:
+    build:
+      context: .
+      args:
+        # Pinned so the image is amd64 regardless of the host toolchain.
+        TARGETARCH: amd64
+    image: notifyrelay:dev
+    restart: unless-stopped
+
+    ports:
+      - "8080:8080" # HTTP API
+      - "2525:2525" # SMTP inbound
+
+    environment:
+      # Secrets are injected here, never written into the config file.
+      # An unset variable is fine while no channel references it; once the M1
+      # email channel is configured with `!env SMTP_PASSWORD`, a missing value
+      # makes the service refuse to start — by design.
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+
+    volumes:
+      # Copy configs/notifyrelay.example.yaml to configs/notifyrelay.yaml and
+      # edit it for real use.
+      - ./configs/notifyrelay.example.yaml:/etc/notifyrelay/config.yaml:ro

@@ -1,0 +1,123 @@
+NotifyRelay (通知中继)
+Copyright (C) 2026 The NotifyRelay Authors
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+The full text is in the LICENSE file.
+
+Note that the AGPL requires that users interacting with this software over a
+network be offered the corresponding source. Keep that in mind before deploying
+a modified version as a network service.
+
+================================================================================
+THIRD-PARTY ATTRIBUTIONS
+================================================================================
+
+--------------------------------------------------------------------------------
+1. Ported source code
+--------------------------------------------------------------------------------
+
+Whenever code is ported, it gets an entry here AND a provenance header in the
+file itself. Both are required: Apache-2.0 section 4(b) requires modified files
+to carry prominent modification notices, and section 4(c) requires the original
+copyright notice to be retained.
+
+--------------------------------------------------------------------------------
+1.1 kubesphere/notification-manager
+--------------------------------------------------------------------------------
+
+  License : Apache License 2.0 (full text in third_party/licenses/Apache-2.0.txt)
+  Source  : https://github.com/kubesphere/notification-manager
+  Files   : pkg/notify/notifier/email/email.go  (lines 284-328)
+  Used in : internal/channel/email/compose.go
+
+  What was taken — the ENCODING POLICY, not the bytes:
+
+    - non-ASCII headers are Q-encoded (mime.QEncoding)
+    - every MIME part declares charset=UTF-8
+    - the body is quoted-printable encoded
+    - the plain-text part precedes the HTML part in multipart/alternative,
+      so a reader picks the richest part it can render
+
+  What was NOT taken:
+
+    - the upstream SMTP client (dialling, TLS negotiation, AUTH). This project
+      uses github.com/wneessen/go-mail for transport instead.
+    - the upstream single-part body. Upstream declares multipart/alternative
+      but emits one part; this project emits both, which is what gives an HTML
+      notification a readable fallback in a text-only client.
+
+  Modifications: adapted to this project's Channel interface and Message model.
+  See the provenance header at the top of internal/channel/email/compose.go.
+
+
+--------------------------------------------------------------------------------
+2. Linked dependencies
+--------------------------------------------------------------------------------
+
+The following libraries are linked into the binary. License identifiers were
+verified by reading each module's LICENSE file, not its README.
+
+  github.com/emersion/go-sasl        MIT License
+      SASL mechanisms for the SMTP inbound path.
+
+  github.com/emersion/go-smtp        MIT License
+      SMTP server for the inbound listener and for the test suite.
+
+  github.com/go-chi/chi/v5           MIT License
+      Copyright (c) 2015-present Peter Kieltyka, Google Inc.
+
+  github.com/wneessen/go-mail        MIT License
+      SMTP client for the email channel.
+
+  github.com/yuin/goldmark           MIT License
+      Copyright (c) 2019 Yusuke Inuzuka
+
+  gopkg.in/yaml.v3                   MIT License and Apache License 2.0
+      Copyright (c) 2011-2019 Canonical Ltd.
+      This project is covered by two licenses: files ported to Go from libyaml
+      are MIT, the remainder is Apache-2.0. See the module's LICENSE file.
+
+  golang.org/x/crypto, golang.org/x/text   BSD-3-Clause
+      Indirect dependencies of the above.
+
+Update this list whenever a dependency is added. Verify the license by reading
+the module's LICENSE file — several popular projects are not under the license
+their README implies.
+
+
+--------------------------------------------------------------------------------
+3. Design references (no code copied)
+--------------------------------------------------------------------------------
+
+The following projects influenced this project's DESIGN. As of M0, no source
+code, schema or template has been copied from any of them.
+
+  caronc/apprise                     BSD 2-Clause   channel registry design
+  kubesphere/notification-manager    Apache-2.0     Factory registry, pipeline stages
+  saderi/SMTP-Switch                 MIT            retry, queue and quota design
+  YoRyan/mailrise                    MIT            SMTP recipient routing syntax
+  caronc/apprise-api                 MIT            /channels metadata endpoint
+  idealista/prom2teams               Apache-2.0     byte-based message splitting
+  bougou/alertmanager-webhook-adapter Apache-2.0    Chinese IM message templates
+  alphorn-dev/alphorn                AGPL-3.0       delivery data model
+  hyvor/relay                        AGPL-3.0       per-attempt audit trail, retry cadence
+  LeslieLeung/heimdallr              GPL-3.0        group concept (channels behind one token)
+
+Keeping this list is not a legal obligation. It is recorded so that a later
+reader can tell which ideas came from where — and so that no one assumes code
+may be copied from a project merely because its design was studied.
+
+This project is itself AGPL-3.0, so reusing code from the AGPL-3.0 projects
+above would be licence-compatible. That has NOT happened. If it ever does, move
+the entry to section 1 with a provenance header in the file, and state exactly
+which parts were taken.
