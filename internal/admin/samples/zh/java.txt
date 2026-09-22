@@ -1,0 +1,74 @@
+// Java 11+，java.net.http。不依赖第三方库。
+//
+// HttpClient 默认校验证书链，而且没有关掉它的开关——对一个凭据就是请求头里
+// bearer token 的客户端来说，这个形状才是对的。不要为了绕开证书问题去造一个
+// 什么都信的 SSLContext；去修证书。
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+
+public final class Notify {
+
+    private static final String BASE_URL = "{{BASE_URL}}";
+
+    public static void main(String[] args) throws Exception {
+        String token = System.getenv("NOTIFYRELAY_TOKEN");
+        if (token == null || token.isEmpty()) {
+            System.err.println("set NOTIFYRELAY_TOKEN first");
+            System.exit(1);
+        }
+
+        HttpClient client = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .build();
+
+        // --------------------------------------------------------- 发一条
+
+        String payload = """
+                {
+                  "targets": ["oncall"],
+                  "title": "Replication lag on db-03",
+                  "body": "**lag**: 12s",
+                  "format": "markdown",
+                  "type": "warning"
+                }
+                """;
+
+        HttpRequest post = HttpRequest.newBuilder()
+                .uri(URI.create(BASE_URL + "/api/v1/notify"))
+                .timeout(Duration.ofSeconds(10))
+                .header("Authorization", "Bearer " + token)
+                .header("Content-Type", "application/json")
+                // 用同一个 key 重发会重放第一次的响应，渠道那边仍然只看到
+                // 一条消息。能接受重复就省略它。
+                .header("Idempotency-Key", "db-03-lag-20260922T091400")
+                .POST(HttpRequest.BodyPublishers.ofString(payload))
+                .build();
+
+        HttpResponse<String> response = client.send(post, HttpResponse.BodyHandlers.ofString());
+        System.out.println(response.statusCode() + " " + response.body());
+
+        // 202 表示已入队。改成在 payload 里加 "sync": true，调用就会阻塞到
+        // 每个目标都有结果，返回 200 和逐目标的结果。
+
+        // ------------------------------------------------------- 结果
+
+        // 来自上面的响应
+        String deliveryId = "282d67a1b3c4e5f6";
+
+        HttpRequest get = HttpRequest.newBuilder()
+                .uri(URI.create(BASE_URL + "/api/v1/messages/" + deliveryId))
+                .timeout(Duration.ofSeconds(10))
+                .header("Authorization", "Bearer " + token)
+                .GET()
+                .build();
+
+        HttpResponse<String> detail = client.send(get, HttpResponse.BodyHandlers.ofString());
+        System.out.println(detail.statusCode() + " " + detail.body());
+
+        // 4xx 会带 {"error": "...", "message": "..."}。按 `error` 分支，
+        // 不要按 `message`——后者是写给人看的，措辞会变。
+    }
+}

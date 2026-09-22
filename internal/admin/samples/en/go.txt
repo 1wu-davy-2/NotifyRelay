@@ -74,7 +74,8 @@ func main() {
 
 	// ----------------------------------------------------------- the result
 
-	id := "282d67a1b3c4e5f6" // from the response above, or the operator UI
+	// from the response above, or the operator UI
+	id := "282d67a1b3c4e5f6"
 	get, err := http.NewRequest(http.MethodGet, baseURL+"/api/v1/messages/"+id, nil)
 	if err != nil {
 		panic(err)

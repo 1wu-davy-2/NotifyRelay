@@ -1,10 +1,9 @@
-// .NET 5+ (System.Net.Http.Json).
+// .NET 5+（System.Net.Http.Json）。
 //
-// HttpClient validates the server certificate by default. Do not add a
-// HttpClientHandler whose ServerCertificateCustomValidationCallback returns
-// true, and do not set ServicePointManager.ServerCertificateValidationCallback
-// — both disable the check globally for the process, and the bearer token
-// travels in the request headers.
+// HttpClient 默认校验服务端证书。不要加 ServerCertificateCustomValidationCallback
+// 返回 true 的 HttpClientHandler，也不要设
+// ServicePointManager.ServerCertificateValidationCallback——两者都会在整个
+// 进程范围内关掉校验，而 bearer token 就在请求头里。
 using System;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -26,11 +25,11 @@ internal static class Program
 
         using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        // A repeat with the same key replays the first response and the channel
-        // still sees one message. Omit it if duplicates are acceptable.
+        // 用同一个 key 重发会重放第一次的响应，渠道那边仍然只看到一条消息。
+        // 能接受重复就省略它。
         client.DefaultRequestHeaders.Add("Idempotency-Key", "db-03-lag-20260922T091400");
 
-        // ----------------------------------------------------------- send one
+        // ----------------------------------------------------------- 发一条
 
         var payload = new
         {
@@ -45,19 +44,19 @@ internal static class Program
         string body = await response.Content.ReadAsStringAsync();
         Console.WriteLine($"{(int)response.StatusCode} {body}");
 
-        // 202 means queued. Add sync = true to the payload instead and the call
-        // blocks until every target has an outcome, returning 200 with a
-        // per-target result.
+        // 202 表示已入队。改成在 payload 里加 sync = true，调用就会阻塞到每个
+        // 目标都有结果，返回 200 和逐目标的结果。
 
-        // --------------------------------------------------------- the result
+        // --------------------------------------------------------- 结果
 
-        const string deliveryId = "282d67a1b3c4e5f6"; // from the response above
+        // 来自上面的响应
+        const string deliveryId = "282d67a1b3c4e5f6";
 
         using var detail = await client.GetAsync(BaseUrl + "/api/v1/messages/" + deliveryId);
         Console.WriteLine($"{(int)detail.StatusCode} {await detail.Content.ReadAsStringAsync()}");
 
-        // A 4xx carries {"error": "...", "message": "..."}. Branch on `error`,
-        // never on `message`.
+        // 4xx 会带 {"error": "...", "message": "..."}。按 `error` 分支，
+        // 不要按 `message`。
         return 0;
     }
 }

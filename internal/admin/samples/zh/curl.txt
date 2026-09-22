@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# 明文 token。auth.api_keys 里存的是它的 sha256 摘要——这里要填明文，不是摘要。
+: "${NOTIFYRELAY_TOKEN:?set NOTIFYRELAY_TOKEN first}"
+
+# --fail-with-body 让 4xx/5xx 以非零码退出，同时照样打印错误体——要分支判断的
+# 错误码就在错误体里。
+# 注意这里没有 -k：token 走请求头，所以连接必须校验。
+curl --fail-with-body --silent --show-error \
+  --max-time 10 \
+  -X POST '{{BASE_URL}}/api/v1/notify' \
+  -H "Authorization: Bearer ${NOTIFYRELAY_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: db-03-lag-$(date -u +%Y%m%dT%H%M%S)" \
+  -d '{
+        "targets": ["oncall"],
+        "title": "Replication lag on db-03",
+        "body": "**lag**: 12s",
+        "format": "markdown",
+        "type": "warning"
+      }'
+
+# 用同一个 Idempotency-Key 重发，会逐字节重放第一次的响应，并带上
+# `Idempotent-Replay: true`；渠道那边仍然只看到一条消息。
+# 能接受重复就别带这个头。
+
+# ---------------------------------------------------------------------- 结果
+
+# 上面这个 POST 返回 202 和一个投递 ID。查它后来怎么样了：
+#
+#   curl --fail-with-body --silent --show-error \
+#     -H "Authorization: Bearer ${NOTIFYRELAY_TOKEN}" \
+#     '{{BASE_URL}}/api/v1/messages/<delivery-id>'
+#
+# 或者列出卡住的那批，实际排查时这个查询更有用：
+#
+#   curl --fail-with-body --silent --show-error \
+#     -H "Authorization: Bearer ${NOTIFYRELAY_TOKEN}" \
+#     '{{BASE_URL}}/api/v1/messages?status=failed&limit=50'

@@ -1,0 +1,96 @@
+// Package main 通过 NotifyRelay 发一条通知。
+//
+// 只用标准库。默认 transport 会校验证书链；不要换成不校验的——bearer token
+// 就在请求头里，不校验的连接等于把它交给链路上的任何人。
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"time"
+)
+
+const baseURL = "{{BASE_URL}}"
+
+func main() {
+	token := os.Getenv("NOTIFYRELAY_TOKEN")
+	if token == "" {
+		fmt.Fprintln(os.Stderr, "set NOTIFYRELAY_TOKEN first")
+		os.Exit(1)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	// ------------------------------------------------------------- 发一条
+
+	payload, err := json.Marshal(map[string]any{
+		"targets": []string{"oncall"},
+		"title":   "Replication lag on db-03",
+		"body":    "**lag**: 12s",
+		"format":  "markdown",
+		"type":    "warning",
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/api/v1/notify", bytes.NewReader(payload))
+	if err != nil {
+		panic(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	// 用同一个 key 重发会重放第一次的响应，渠道那边仍然只看到一条消息。
+	// 能接受重复就删掉这一行。
+	req.Header.Set("Idempotency-Key", "db-03-lag-"+time.Now().UTC().Format("20060102T150405"))
+
+	resp, err := client.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("%d %s\n%s\n", resp.StatusCode, http.StatusText(resp.StatusCode), body)
+
+	// 202 表示已入队。响应里每个目标一条：
+	//
+	//   {"request_id":"...","accepted":true,
+	//    "deliveries":[{"id":"282d67a1b3c4e5f6","target":"oncall", ...}]}
+	//
+	// 改成在 payload 里加 "sync": true，调用就会阻塞到每个目标都有结果，
+	// 返回 200 和逐目标的结果。绝不会是一个笼统的总状态——把一次扇出压成
+	// 一个词，正是部分失败被藏起来的方式。
+
+	// ----------------------------------------------------------- 结果
+
+	// 来自上面的响应，也可以在后台看到
+	id := "282d67a1b3c4e5f6"
+	get, err := http.NewRequest(http.MethodGet, baseURL+"/api/v1/messages/"+id, nil)
+	if err != nil {
+		panic(err)
+	}
+	get.Header.Set("Authorization", "Bearer "+token)
+
+	detail, err := client.Do(get)
+	if err != nil {
+		panic(err)
+	}
+	defer detail.Body.Close()
+
+	attempts, err := io.ReadAll(detail.Body)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("%d\n%s\n", detail.StatusCode, attempts)
+
+	// 诊断信息在尝试历史里。每次尝试都带一个 class；NOT_ATTEMPTED 配上
+	// skip_reason，表示这个渠道根本没被调用过——这与「调用了但被拒」是两回事。
+}

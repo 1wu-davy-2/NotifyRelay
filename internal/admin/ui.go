@@ -23,7 +23,11 @@ import (
 	"notifyrelay/internal/store"
 )
 
-//go:embed templates/*.html static/* samples/*
+// The samples are two levels deep because they exist once per language:
+// samples/<lang>/<name>.txt. The pattern says so rather than embedding the
+// directory, so a sample that ends up at the wrong depth fails the build.
+//
+//go:embed templates/*.html static/* samples/*/*
 var assets embed.FS
 
 // pages holds one parsed template set per language.
@@ -151,19 +155,20 @@ type typeForm struct {
 //
 // value is the instance's stored configuration, which is empty when the form is
 // for a new channel.
-func buildForm(d channel.Descriptor, value map[string]any, secretsSet map[string]bool) typeForm {
+func buildForm(d channel.Descriptor, value map[string]any, secretsSet map[string]bool, lang i18n.Lang) typeForm {
 	form := typeForm{Type: d.Type, Label: d.Type}
 	if d.Type != "" {
 		form.Label = strings.ToUpper(d.Type[:1]) + d.Type[1:]
 	}
 
 	for _, spec := range d.ParamSchema {
-		form.Fields = append(form.Fields, buildField(spec, value[spec.Name], secretsSet[spec.Name]))
+		form.Fields = append(form.Fields,
+			buildField(d.Type, spec, value[spec.Name], secretsSet[spec.Name], lang))
 	}
 	return form
 }
 
-func buildField(spec channel.ParamSpec, raw any, isSet bool) fieldView {
+func buildField(channelType string, spec channel.ParamSpec, raw any, isSet bool, lang i18n.Lang) fieldView {
 	f := fieldView{
 		Name:        spec.Name,
 		Label:       spec.Label,
@@ -177,6 +182,19 @@ func buildField(spec channel.ParamSpec, raw any, isSet bool) fieldView {
 
 	if spec.Label == "" {
 		f.Label = spec.Name
+	}
+
+	// The schema's English is the declaration; a translation overlays it. What
+	// is not translated stays English rather than going blank, so a channel type
+	// nobody has translated yet still produces a usable form — and a test
+	// asserts that never happens for the types this build ships.
+	if c, ok := i18n.LookupParam(lang, channelType, spec.Name); ok {
+		if c.Label != "" {
+			f.Label = c.Label
+		}
+		if c.Desc != "" {
+			f.Description = c.Desc
+		}
 	}
 	if spec.Min != nil {
 		f.Min = trimNumber(*spec.Min)
@@ -414,6 +432,7 @@ func (h *handler) loginPage(w http.ResponseWriter, r *http.Request) {
 // channelsPage implements GET /admin/channels.
 func (h *handler) channelsPage(w http.ResponseWriter, r *http.Request, actor string) {
 	ctx := r.Context()
+	lang := langFrom(ctx)
 
 	stored, err := h.deps.Channels.Load(ctx)
 	if err != nil {
@@ -426,7 +445,7 @@ func (h *handler) channelsPage(w http.ResponseWriter, r *http.Request, actor str
 	descriptors := channel.Descriptors()
 	forms := make([]typeForm, 0, len(descriptors))
 	for _, d := range descriptors {
-		forms = append(forms, buildForm(d, nil, nil))
+		forms = append(forms, buildForm(d, nil, nil, lang))
 	}
 	forms = sortedTypes(forms)
 
@@ -459,7 +478,7 @@ func (h *handler) channelsPage(w http.ResponseWriter, r *http.Request, actor str
 				editSecrets[name] = true
 			}
 			if d, ok := channel.Lookup(cfg.Type); ok {
-				f := buildForm(d, cfg.Config, editSecrets)
+				f := buildForm(d, cfg.Config, editSecrets, lang)
 
 				// The form is rendered from the per-type list, so the type
 				// being edited has to be replaced in it. Rendering the blank

@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""通过信使中枢发一条通知，然后读它的结果。
+
+只用标准库。urllib 默认校验证书链，而且必须保持这样：
+bearer token 走的是请求头，不校验的连接等于把它交给链路上的任何人。
+不要在这里用 ssl._create_unverified_context() 或未校验的 SSLContext。
+"""
+
+import json
+import os
+import urllib.error
+import urllib.request
+
+BASE_URL = "{{BASE_URL}}"
+TOKEN = os.environ["NOTIFYRELAY_TOKEN"]
+
+
+def call(method, path, payload=None, idempotency_key=None):
+    """发一个请求。4xx/5xx 时抛异常，并带上错误体。"""
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+
+    req = urllib.request.Request(BASE_URL + path, data=data, method=method)
+    req.add_header("Authorization", "Bearer " + TOKEN)
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    if idempotency_key:
+        req.add_header("Idempotency-Key", idempotency_key)
+
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status, json.load(resp)
+    except urllib.error.HTTPError as err:
+        # 有用的是错误体：{"error": "...", "message": "..."}。
+        # 按 `error` 分支，不要按 `message`——后者是写给人看的。
+        raise RuntimeError(f"{err.code} {err.read().decode('utf-8', 'replace')}") from err
+
+
+# --------------------------------------------------------------------- 发一条
+
+status, body = call(
+    "POST",
+    "/api/v1/notify",
+    {
+        "targets": ["oncall"],
+        "title": "Replication lag on db-03",
+        "body": "**lag**: 12s",
+        "format": "markdown",
+        "type": "warning",
+    },
+    # 用同一个 key 重发会重放第一次的响应，渠道那边仍然只看到一条消息。
+    # 能接受重复就省略它。
+    idempotency_key="db-03-lag-20260922T091400",
+)
+
+print(status, json.dumps(body, indent=2, ensure_ascii=False))
+
+# 202 表示已入队。改成在 payload 里加 "sync": True，调用就会阻塞到每个目标
+# 都有结果，返回 200 和逐目标的结果。
+
+# ---------------------------------------------------------------------- 结果
+
+delivery_id = body["deliveries"][0]["id"] if body.get("deliveries") else "282d67a1b3c4e5f6"
+
+status, detail = call("GET", "/api/v1/messages/" + delivery_id)
+print(status, json.dumps(detail, indent=2, ensure_ascii=False))
+
+# 或者列出卡住的那批，实际排查时这个查询更有用：
+#
+#   status, stuck = call("GET", "/api/v1/messages?status=failed&limit=50")

@@ -13,13 +13,22 @@ import (
 // It exists because the person who has to call this service is often not the
 // person who deployed it, and the answer to "how do I send one of these from
 // Python" should not be "read the Go source". The samples are real files under
-// samples/ rather than strings in this file, so they can be edited as code and
-// syntax-highlighted by an editor.
+// samples/<lang>/ rather than strings in this file, so they can be edited as
+// code and syntax-highlighted by an editor.
 //
-// They are checked in one specific way: no sample may contain a way to turn
-// off certificate verification. The bearer token travels in a header, so an
-// unverified connection hands it to whoever is in the middle, and a copy-pasted
-// sample is exactly how that mistake propagates. See apidocs_test.go.
+// The two languages are the same program with different comments, and a test
+// holds them to that: strip the prose from both and what is left must match
+// byte for byte. Duplicating a file per language is how the two drift, and the
+// drift that matters is the code — somebody fixes a header in one copy and the
+// other keeps the old one, and the reader who gets the stale one cannot tell.
+//
+// They are also checked in one specific way: no sample may contain a way to
+// turn off certificate verification. The bearer token travels in a header, so
+// an unverified connection hands it to whoever is in the middle, and a
+// copy-pasted sample is exactly how that mistake propagates. That check runs
+// over every language — a translated sample is a sample somebody will paste,
+// and a check that only read the English column is the check a translation
+// quietly bypasses. See apidocs_test.go and samples_test.go.
 
 // apiDocSample is one language's worked example.
 type apiDocSample struct {
@@ -108,27 +117,39 @@ func sampleNote(t *i18n.Messages, s apiDocSample) string {
 	}
 }
 
-// loadSamples reads the embedded samples once, at startup.
+// loadSamples reads the embedded samples once, at startup, for every language.
 //
 // A missing or renamed file is a failure to start rather than a page that
 // renders with a blank tab. The same reasoning as parsing the templates up
 // front: it is much easier to notice a service that will not start than a page
 // nobody opened until the day they needed it.
-func loadSamples() ([]apiDocSample, error) {
-	out := make([]apiDocSample, 0, len(sampleFiles))
+//
+// Every language must have every sample, and a language missing one is that
+// same startup failure rather than a tab that quietly shows another language.
+//
+// The two copies of a sample are the same program with different comments.
+// Duplicating a file per language is how the two drift, so a test strips the
+// comments from both and asserts what is left is identical — see
+// samples_test.go. The comments are the translation; the code is not.
+func loadSamples() (map[i18n.Lang][]apiDocSample, error) {
+	out := make(map[i18n.Lang][]apiDocSample, len(i18n.Langs))
 
-	for _, s := range sampleFiles {
-		raw, err := assets.ReadFile("samples/" + s.ID + ".txt")
-		if err != nil {
-			return nil, fmt.Errorf("admin: reading the %s API sample: %w", s.ID, err)
+	for _, l := range i18n.Langs {
+		samples := make([]apiDocSample, 0, len(sampleFiles))
+		for _, s := range sampleFiles {
+			raw, err := assets.ReadFile("samples/" + string(l) + "/" + s.ID + ".txt")
+			if err != nil {
+				return nil, fmt.Errorf("admin: reading the %s API sample in %s: %w", s.ID, l, err)
+			}
+			s.Body = string(raw)
+			samples = append(samples, s)
 		}
-		s.Body = string(raw)
-		out = append(out, s)
+		out[l] = samples
 	}
 	return out, nil
 }
 
-var apiSamples = func() []apiDocSample {
+var apiSamples = func() map[i18n.Lang][]apiDocSample {
 	s, err := loadSamples()
 	if err != nil {
 		panic(err)
@@ -217,8 +238,8 @@ func (h *handler) apiDocsPage(w http.ResponseWriter, r *http.Request, actor stri
 
 	baseURL := apiBaseURL(r)
 
-	samples := make([]apiDocSample, 0, len(apiSamples))
-	for _, s := range apiSamples {
+	samples := make([]apiDocSample, 0, len(sampleFiles))
+	for _, s := range apiSamples[lang] {
 		s.Body = strings.ReplaceAll(s.Body, "{{BASE_URL}}", baseURL)
 		s.Note = sampleNote(t, s)
 		samples = append(samples, s)

@@ -75,7 +75,8 @@ int main() {
 
     // ----------------------------------------------------------- the result
 
-    const std::string delivery_id = "282d67a1b3c4e5f6";  // from the response above
+    // from the response above
+    const std::string delivery_id = "282d67a1b3c4e5f6";
 
     auto detail = cli.Get("/api/v1/messages/" + delivery_id, headers);
     if (!detail) {

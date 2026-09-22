@@ -57,7 +57,8 @@ public final class Notify {
 
         // ------------------------------------------------------- the result
 
-        String deliveryId = "282d67a1b3c4e5f6"; // from the response above
+        // from the response above
+        String deliveryId = "282d67a1b3c4e5f6";
 
         HttpRequest get = HttpRequest.newBuilder()
                 .uri(URI.create(BASE_URL + "/api/v1/messages/" + deliveryId))

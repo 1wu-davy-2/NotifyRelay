@@ -1,0 +1,88 @@
+// 构建：c++ -std=c++17 notify.cpp -o notify -lssl -lcrypto -lpthread
+//         需要定义 CPPHTTPLIB_OPENSSL_SUPPORT，并把 httplib.h 放进 include
+//         路径，它来自 https://github.com/yhirose/cpp-httplib。
+//
+// cpp-httplib 是 header-only 的，所以这里用它而不是 libcurl：同样的活，
+// 用 C API 写出来是三倍的代码量。如果你已经链了 libcurl，隔壁的 C 示例更短。
+//
+// 开了 OPENSSL_SUPPORT 之后，cpp-httplib 默认校验证书链。不要调用
+// cli.enable_server_certificate_verification(false)：bearer token 就在
+// 请求头里。
+#include <httplib.h>
+
+#include <cstdlib>
+#include <iostream>
+#include <string>
+
+namespace {
+
+constexpr const char* kBaseUrl = "{{BASE_URL}}";
+
+// 一个 client，复用。用 base URL 构造，所以传给 Post/Get 的路径是
+// host 之后的那一段。
+httplib::Client make_client() {
+    httplib::Client cli(kBaseUrl);
+    cli.set_connection_timeout(10);
+    cli.set_read_timeout(10);
+    cli.set_follow_location(false);
+    return cli;
+}
+
+}  // namespace
+
+int main() {
+    const char* token = std::getenv("NOTIFYRELAY_TOKEN");
+    if (token == nullptr || *token == '\0') {
+        std::cerr << "set NOTIFYRELAY_TOKEN first\n";
+        return 1;
+    }
+
+    const httplib::Headers headers = {
+        {"Authorization", std::string("Bearer ") + token},
+        // 用同一个 key 重发会重放第一次的响应，
+        // 渠道那边仍然只看到一条消息。
+        {"Idempotency-Key", "db-03-lag-20260922T091400"},
+    };
+
+    auto cli = make_client();
+
+    // ------------------------------------------------------------- 发一条
+
+    // 用原始字符串字面量，JSON 不用转义。body 是 markdown，因为调用方就是
+    // 这么说的——服务端不猜，每个渠道各自把它转成自己的方言。
+    const std::string payload = R"({
+  "targets": ["oncall"],
+  "title": "Replication lag on db-03",
+  "body": "**lag**: 12s",
+  "format": "markdown",
+  "type": "warning"
+})";
+
+    auto res = cli.Post("/api/v1/notify", headers, payload, "application/json");
+    if (!res) {
+        // 完全没有 HTTP 状态码：对端根本没连上，这和「被拒绝」是两种不同的
+        // 失败。
+        std::cerr << "request failed: error " << static_cast<int>(res.error()) << "\n";
+        return 1;
+    }
+    std::cout << res->status << " " << res->body << "\n";
+
+    // 202 表示已入队。在 payload 里加 "sync": true，调用就会阻塞到每个目标
+    // 都有结果，改为返回 200 和逐目标的结果。
+
+    // ----------------------------------------------------------- 结果
+
+    // 来自上面的响应
+    const std::string delivery_id = "282d67a1b3c4e5f6";
+
+    auto detail = cli.Get("/api/v1/messages/" + delivery_id, headers);
+    if (!detail) {
+        std::cerr << "request failed: error " << static_cast<int>(detail.error()) << "\n";
+        return 1;
+    }
+    std::cout << detail->status << " " << detail->body << "\n";
+
+    // 4xx 会带 {"error": "...", "message": "..."}。按 `error` 分支，
+    // 不要按 `message`——后者是写给人看的，措辞会变。
+    return 0;
+}
