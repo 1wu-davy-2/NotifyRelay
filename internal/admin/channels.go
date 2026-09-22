@@ -97,6 +97,14 @@ func (h *handler) channelTypes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"channels": router.Catalog(h.deps.Router)})
 }
 
+// newChannel is the sentinel the "New channel" link uses as its edit target.
+//
+// It is not a channel name and must not be looked up as one: the lookup returns
+// nil, the form is skipped, and the button appears to do nothing at all. It is
+// also what the form sends back as its Editing value, which is how the server
+// tells a create from an edit.
+const newChannel = "__new__"
+
 // saveRequest is the body of POST /admin/api/channels.
 type saveRequest struct {
 	Name    string             `json:"name"`
@@ -104,13 +112,23 @@ type saveRequest struct {
 	Enabled *bool              `json:"enabled"`
 	Config  map[string]any     `json:"config"`
 	Quota   config.QuotaConfig `json:"quota"`
+
+	// Editing is what the caller believed it was doing: newChannel when the
+	// form was opened to create, the channel's own name when it was opened to
+	// change, and empty when the caller has no such notion — a script posting a
+	// desired state, which is what this endpoint has always accepted.
+	Editing string `json:"editing,omitempty"`
+
+	// Replace says the caller has seen the name collision and means it anyway.
+	Replace bool `json:"replace,omitempty"`
 }
 
 // saveChannel implements POST /admin/api/channels.
 //
 // One endpoint for create and update: the caller's intent is "this is what the
 // channel should be", and a separate create would have to answer what happens
-// when the name already exists.
+// when the name already exists. It answers that question here instead, and only
+// when the caller has said it meant to create.
 func (h *handler) saveChannel(w http.ResponseWriter, r *http.Request) {
 	var req saveRequest
 	if err := decode(w, r, &req); err != nil {
@@ -137,6 +155,20 @@ func (h *handler) saveChannel(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.log.Error("admin: reading a channel failed", slog.String("error", err.Error()))
 		writeError(w, http.StatusInternalServerError, "internal", "the channel could not be read")
+		return
+	}
+
+	// A new-channel form that names an existing channel is a collision, not an
+	// edit. Saving it would replace a channel that is delivering right now, and
+	// the operator asked to create one — so the answer is a question rather
+	// than a write, and the question names what it would have replaced.
+	//
+	// Only when the caller said it meant to create. An empty Editing is a
+	// client posting a desired state, which is what this endpoint has always
+	// been for, and refusing that would break every script using it.
+	if existing != nil && req.Editing == newChannel && !req.Replace {
+		writeError(w, http.StatusConflict, "name_taken",
+			"a channel named "+req.Name+" already exists; saving would replace it")
 		return
 	}
 

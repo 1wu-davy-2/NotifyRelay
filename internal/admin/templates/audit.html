@@ -24,8 +24,19 @@
     {{end}}
     </tbody>
   </table>
+  {{else if not .Enabled}}
+  <p class="muted">
+    This deployment keeps no record of operator actions: it was started without
+    an audit store, so nothing done through this interface is being written
+    down. This is not the same as an empty trail, and the difference matters —
+    an empty page here means nothing was recorded, not that nothing happened.
+  </p>
   {{else}}
-  <p class="muted">Nothing yet.</p>
+  <p class="muted">
+    Nothing yet. Every change made through this interface is recorded here —
+    creating, editing and deleting a channel, resetting a breaker, and creating,
+    disabling or deleting an API key.
+  </p>
   {{end}}
 </main>
 {{template "foot" .}}

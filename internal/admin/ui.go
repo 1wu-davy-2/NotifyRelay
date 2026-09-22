@@ -114,6 +114,15 @@ type fieldView struct {
 	// the field is always shown.
 	ShowIfField  string
 	ShowIfEquals string
+
+	// RequiredNow marks a required field that is always shown, so the template
+	// can put `required` on the control itself.
+	//
+	// A conditional field's control is left to the script, which sets required
+	// as the field appears and clears it as the field goes: a hidden input that
+	// is still required is a form that cannot be submitted, and the browser
+	// reports it against a box nobody can see.
+	RequiredNow bool
 }
 
 // typeForm is one channel type's generated field set.
@@ -169,6 +178,7 @@ func buildField(spec channel.ParamSpec, raw any, isSet bool) fieldView {
 		f.ShowIfField = spec.ShowIf.Field
 		f.ShowIfEquals = fmt.Sprint(spec.ShowIf.Equals)
 	}
+	f.RequiredNow = f.Required && f.ShowIfField == ""
 
 	// A private value is never rendered, whatever was passed in. The caller is
 	// supposed to have masked it already; doing it again here means a future
@@ -264,8 +274,43 @@ type pageData struct {
 	// Flash is a message from the previous action, carried in the query string
 	// rather than in a session: a redirect after a form post should say what
 	// happened, and a one-shot query parameter is the smallest thing that does.
+	//
+	// The script drops the parameter from the address bar once the page has it.
+	// Reading it is a one-shot event; leaving it in the URL means a reload
+	// replays a message about something that happened ten minutes ago, and a
+	// pasted link carries somebody else's.
 	Flash string
 	Error string
+
+	// Back and BackLabel are the error page's way out. A page that failed while
+	// reading deliveries should offer deliveries: the operator was in the middle
+	// of something, and the only useful link is the one back to it.
+	Back      string
+	BackLabel string
+}
+
+// navHome is where each page's error sends the reader back to.
+//
+// The error page used to carry one fixed link to the channel list, which is the
+// wrong page for everything that is not the channel list — and it was worst
+// exactly where it mattered most, since a failed delivery lookup offered a
+// detour through channel configuration.
+var navHome = map[string]struct{ Href, Label string }{
+	"channels":   {"/admin/channels", "Back to channels"},
+	"deliveries": {"/admin/deliveries", "Back to deliveries"},
+	"audit":      {"/admin/audit", "Back to the audit trail"},
+	"keys":       {"/admin/keys", "Back to API keys"},
+	"api-docs":   {"/admin/api-docs", "Back to the API reference"},
+	"setup":      {"/admin/setup", "Back to setup"},
+}
+
+// backFor resolves a nav key to the error page's link, defaulting to the
+// channel list so an unrecognised page still offers somewhere to go.
+func backFor(nav string) (string, string) {
+	if home, ok := navHome[nav]; ok {
+		return home.Href, home.Label
+	}
+	return "/admin/channels", "Back to channels"
 }
 
 func (h *handler) render(w http.ResponseWriter, r *http.Request, page string, data any) {
@@ -345,12 +390,6 @@ func (h *handler) channelsPage(w http.ResponseWriter, r *http.Request, actor str
 		editQuota   config.QuotaConfig
 		editSecrets = map[string]bool{}
 	)
-	// newChannel is the sentinel the "New channel" link uses. It is not a
-	// channel name and must not be looked up as one: the lookup would return
-	// nil, the form would be skipped, and the button would appear to do nothing
-	// at all.
-	const newChannel = "__new__"
-
 	if editing != "" && editing != newChannel {
 		cfg, err := h.deps.Channels.Get(ctx, editing)
 		if err != nil {
@@ -541,9 +580,15 @@ func (h *handler) auditPage(w http.ResponseWriter, r *http.Request, actor string
 	h.render(w, r, "audit.html", struct {
 		pageData
 		Actions []auditView
+		// Enabled distinguishes "this deployment keeps no audit trail" from
+		// "it does, and nothing has happened yet". Both render as an empty
+		// table, and telling them apart is the difference between a fact about
+		// the deployment and a fact about the operator's afternoon.
+		Enabled bool
 	}{
 		pageData: h.pageBase(r, actor, "audit"),
 		Actions:  views,
+		Enabled:  h.deps.Audit != nil,
 	})
 }
 
@@ -571,6 +616,7 @@ func (h *handler) renderError(w http.ResponseWriter, r *http.Request, actor, nav
 
 	data := h.pageBase(r, actor, nav)
 	data.Error = message
+	data.Back, data.BackLabel = backFor(nav)
 	w.WriteHeader(http.StatusInternalServerError)
 	h.render(w, r, "error.html", data)
 }

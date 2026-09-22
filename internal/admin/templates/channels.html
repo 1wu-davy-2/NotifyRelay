@@ -56,6 +56,13 @@
         <div>
           <label for="channel-type">Type</label>
           <select id="channel-type" name="type" required>
+            {{if not .EditType}}
+            {{/* A placeholder rather than letting the browser pick the first
+                 entry. Without it, "New channel" opens on whichever type sorts
+                 first, and the fastest way through the form is to accept a
+                 choice nobody made. */}}
+            <option value="" disabled selected>Choose a type…</option>
+            {{end}}
             {{range .Forms}}
             <option value="{{.Type}}" {{if eq .Type $.EditType}}selected{{end}}>{{.Label}}</option>
             {{end}}
@@ -83,25 +90,28 @@
             <span class="req" {{if not .Required}}hidden{{end}} title="required">*</span>
           </label>
 
+          {{/* RequiredNow is set only for a field that is always shown. A
+               conditional field gets its required attribute from the script,
+               which is the only thing that knows whether it is on screen. */}}
           {{if eq .Kind "checkbox"}}
             <input id="f-{{.Name}}" name="{{.Name}}" type="checkbox" {{if .Checked}}checked{{end}}>
           {{else if eq .Kind "select"}}
             {{$value := .Value}}
-            <select id="f-{{.Name}}" name="{{.Name}}">
+            <select id="f-{{.Name}}" name="{{.Name}}"{{if .RequiredNow}} required{{end}}>
               {{range .Options}}<option value="{{.}}" {{if eq . $value}}selected{{end}}>{{.}}</option>{{end}}
             </select>
           {{else if eq .Kind "number"}}
             <input id="f-{{.Name}}" name="{{.Name}}" type="number" value="{{.Value}}"
-                   {{if .Min}}min="{{.Min}}"{{end}} {{if .Max}}max="{{.Max}}"{{end}}>
+                   {{if .Min}}min="{{.Min}}"{{end}} {{if .Max}}max="{{.Max}}"{{end}}{{if .RequiredNow}} required{{end}}>
           {{else if eq .Kind "password"}}
             <input id="f-{{.Name}}" name="{{.Name}}" type="password" value=""
                    autocomplete="new-password"
-                   placeholder="{{if .IsSet}}a value is stored — leave blank to keep it{{end}}">
+                   placeholder="{{if .IsSet}}a value is stored — leave blank to keep it{{end}}"{{if .RequiredNow}} required{{end}}>
             {{if .IsSet}}
             <label class="inline"><input type="checkbox" data-clear="{{.Name}}"> clear this value</label>
             {{end}}
           {{else}}
-            <input id="f-{{.Name}}" name="{{.Name}}" type="text" value="{{.Value}}">
+            <input id="f-{{.Name}}" name="{{.Name}}" type="text" value="{{.Value}}"{{if .RequiredNow}} required{{end}}>
           {{end}}
 
           {{if .Description}}<p class="desc">{{.Description}}</p>{{end}}

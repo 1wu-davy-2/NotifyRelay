@@ -9,6 +9,31 @@
 
   var CSRF_HEADER = "X-NotifyRelay-Admin";
 
+  /* ---------------------------------------------------------------- flash */
+
+  /* A flash message rides in the query string so a redirect after a form post
+   * can say what happened. The server has already rendered it into the page by
+   * the time this runs, so the parameter is dropped from the address bar here.
+   *
+   * Leaving it there replays the message on every reload — "Saved webhook" for
+   * a save from ten minutes ago — and a link copied out of the address bar
+   * carries somebody else's message to whoever opens it. */
+  (function () {
+    var query = window.location.search;
+    if (query.indexOf("ok=") < 0 && query.indexOf("err=") < 0) { return; }
+    try {
+      var params = new URLSearchParams(query);
+      params.delete("ok");
+      params.delete("err");
+      var rest = params.toString();
+      window.history.replaceState(null, "",
+        window.location.pathname + (rest ? "?" + rest : "") + window.location.hash);
+    } catch (e) {
+      /* No URLSearchParams or no history API: the message stays in the URL,
+       * which is untidy and not worth breaking the page over. */
+    }
+  })();
+
   /* ------------------------------------------------------------- requests */
 
   function request(method, path, body) {
@@ -29,7 +54,14 @@
         try { parsed = text ? JSON.parse(text) : null; } catch (e) { /* not JSON */ }
         if (!res.ok) {
           var message = (parsed && (parsed.message || parsed.error)) || text || res.statusText;
-          throw new Error(message);
+          var err = new Error(message);
+          /* The code and the status travel with the error so a caller can
+           * answer a specific refusal specifically. Without them the only
+           * option is to match on the message, which is a string that exists
+           * to be read by a person and will be reworded. */
+          err.status = res.status;
+          err.code = parsed && parsed.error;
+          throw err;
         }
         return parsed;
       });
@@ -107,15 +139,17 @@
 
       field.hidden = !applies;
 
+      /* data-required is on the field wrapper, not on the control: the wrapper
+       * is what carries the schema, and the control is generated inside it. The
+       * lookup used to be on the control, so it never matched and no generated
+       * input was ever required — the red asterisk was the whole mechanism. */
+      var required = field.getAttribute("data-required") === "1";
+
       var marker = field.querySelector(".req");
-      if (marker) {
-        marker.hidden = !(applies && field.getAttribute("data-required") === "1");
-      }
+      if (marker) { marker.hidden = !(applies && required); }
 
       var input = field.querySelector("input, select");
-      if (input && input.hasAttribute("data-required")) {
-        input.required = applies;
-      }
+      if (input) { input.required = applies && required; }
     });
   }
 
@@ -158,6 +192,7 @@
     function collect() {
       var scope = activeScope();
       var config = {};
+      if (!scope) { return null; }
 
       Array.prototype.forEach.call(scope.querySelectorAll(".field"), function (field) {
         if (field.hidden) { return; }
@@ -215,22 +250,54 @@
         type: typeSelect.value,
         enabled: document.getElementById("channel-enabled").checked,
         config: config,
-        quota: quota
+        quota: quota,
+        /* The name the form was opened for. The server needs it to tell "create
+         * a channel called X" apart from "change the channel called X": both
+         * arrive as the same body, and without this the first one silently
+         * becomes the second whenever X already exists. */
+        editing: channelForm.getAttribute("data-editing") || ""
       };
+    }
+
+    function saved(res) {
+      if (res && res.live === false) {
+        say(result, "Saved, but the running service refused it: " + res.reload, false);
+        return;
+      }
+      window.location.href = "/admin/channels?ok=" +
+        encodeURIComponent("Saved " + document.getElementById("channel-name").value);
+    }
+
+    function failed(err, body) {
+      /* A name collision is a question, not a failure. Saving would replace a
+       * channel that is delivering right now, and the operator asked to create
+       * a new one — so they are told what the name collides with, and asked
+       * again with the answer attached. */
+      if (err.code === "name_taken" && window.confirm(err.message + "\n\nReplace it?")) {
+        body.replace = true;
+        request("POST", "/admin/api/channels", body).then(saved).catch(function (again) {
+          say(result, again.message, false);
+        });
+        return;
+      }
+      say(result, err.message, false);
     }
 
     channelForm.addEventListener("submit", function (event) {
       event.preventDefault();
-      request("POST", "/admin/api/channels", collect())
-        .then(function (res) {
-          if (res && res.live === false) {
-            say(result, "Saved, but the running service refused it: " + res.reload, false);
-            return;
-          }
-          window.location.href = "/admin/channels?ok=" +
-            encodeURIComponent("Saved " + document.getElementById("channel-name").value);
-        })
-        .catch(function (err) { say(result, err.message, false); });
+
+      var body = collect();
+      if (!body) {
+        /* Reachable only if the type picker's required attribute is bypassed.
+         * Saying so beats the TypeError that would otherwise surface as a
+         * button that does nothing. */
+        say(result, "Choose a channel type first.", false);
+        return;
+      }
+
+      request("POST", "/admin/api/channels", body)
+        .then(saved)
+        .catch(function (err) { failed(err, body); });
     });
 
     var testButton = document.getElementById("test-form");

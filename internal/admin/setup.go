@@ -41,9 +41,15 @@ import (
 //
 // A length floor and nothing else: composition rules (a digit, a symbol, mixed
 // case) reliably produce Password1! and are worse than a longer passphrase.
-// This is the account that can reconfigure where every notification in the
-// estate goes, so the floor is not one.
-const minPasswordLength = 12
+//
+// Eight is short for an account that can reconfigure where every notification in
+// the estate goes, and it is worth saying so rather than pretending otherwise.
+// It is the floor because the alternative behaved worse in practice: a higher
+// minimum is what puts a password on a sticky note beside the machine, and this
+// account is reached over an internal address by the person who runs the
+// service. The control doing the real work against guessing is the per-source
+// backoff on sign-in, not this number.
+const minPasswordLength = 8
 
 type setupRequest struct {
 	Username string `json:"username"`
@@ -77,10 +83,12 @@ func (h *handler) setupPage(w http.ResponseWriter, r *http.Request) {
 	required, err := h.setupRequired(r.Context())
 	if err != nil {
 		h.log.Error("admin: could not tell whether setup is needed", slog.String("error", err.Error()))
-		h.render(w, r, "error.html", pageData{
+		data := pageData{
 			Title: "Setup",
 			Error: "the administrator account could not be read",
-		})
+		}
+		data.Back, data.BackLabel = backFor("setup")
+		h.render(w, r, "error.html", data)
 		return
 	}
 

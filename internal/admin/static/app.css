@@ -173,6 +173,9 @@ dialog pre {
 }
 dialog .row { margin-top: 14px; }
 
+/* The new-key row: the name box takes the room, the button does not. */
+.key-name-field { min-width: 260px; }
+
 /* ------------------------------------------------------------- API docs */
 
 /* Code samples are wider than a table wants to be, so this one page gets more
