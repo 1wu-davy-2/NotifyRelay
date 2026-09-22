@@ -1,28 +1,40 @@
 {{define "head"}}
 <!doctype html>
-<html lang="en">
+<html lang="{{.HTMLTag}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{.Title}} · NotifyRelay</title>
+<title>{{.Title}} · {{.T.Brand}}</title>
 <link rel="stylesheet" href="/admin/app.css">
 </head>
 <body>
 {{end}}
 
+{{/* The language switch.
+     Each entry is labelled in its own language and not in the current one: the
+     person this is for is the one who cannot read the page they are on, and
+     labelling the way out in the language they cannot read is labelling it for
+     everybody except them. */}}
+{{define "langs"}}
+<nav class="langs" aria-label="{{.T.LangSwitch}}">
+  {{range .LangSwitch}}<a href="{{.Href}}" hreflang="{{.Tag}}"{{if .On}} class="on" aria-current="true"{{end}}>{{.Label}}</a>{{end}}
+</nav>
+{{end}}
+
 {{define "nav"}}
 <header class="bar">
-  <span class="brand">NotifyRelay</span>
+  <span class="brand">{{.T.Brand}}</span>
   <nav>
-    <a href="/admin/channels" {{if eq .Nav "channels"}}class="on"{{end}}>Channels</a>
-    <a href="/admin/deliveries" {{if eq .Nav "deliveries"}}class="on"{{end}}>Deliveries</a>
-    <a href="/admin/audit" {{if eq .Nav "audit"}}class="on"{{end}}>Audit</a>
-    <a href="/admin/keys" {{if eq .Nav "keys"}}class="on"{{end}}>Keys</a>
-    <a href="/admin/api-docs" {{if eq .Nav "api-docs"}}class="on"{{end}}>API</a>
+    <a href="/admin/channels" {{if eq .Nav "channels"}}class="on"{{end}}>{{.T.NavChannels}}</a>
+    <a href="/admin/deliveries" {{if eq .Nav "deliveries"}}class="on"{{end}}>{{.T.NavDeliveries}}</a>
+    <a href="/admin/audit" {{if eq .Nav "audit"}}class="on"{{end}}>{{.T.NavAudit}}</a>
+    <a href="/admin/keys" {{if eq .Nav "keys"}}class="on"{{end}}>{{.T.NavKeys}}</a>
+    <a href="/admin/api-docs" {{if eq .Nav "api-docs"}}class="on"{{end}}>{{.T.NavAPI}}</a>
   </nav>
   <span class="spacer"></span>
+  {{template "langs" .}}
   <span class="actor">{{.Actor}}</span>
-  <button type="button" class="link" id="sign-out">Sign out</button>
+  <button type="button" class="link" id="sign-out">{{.T.SignOut}}</button>
 </header>
 {{end}}
 
@@ -31,7 +43,16 @@
 {{if .Error}}<p class="flash bad">{{.Error}}</p>{{end}}
 {{end}}
 
+{{/* The script's own strings, as data.
+     app.js builds four confirmations and two prompts at the moment it needs
+     them, and it cannot read a Go template. Rendering them as JSON into the
+     page is what keeps the copy in one table instead of two. */}}
+{{define "strings"}}
+<script type="application/json" id="i18n">{{json .T.Script}}</script>
+{{end}}
+
 {{define "foot"}}
+{{template "strings" .}}
 <script src="/admin/app.js"></script>
 </body>
 </html>

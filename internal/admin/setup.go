@@ -83,11 +83,9 @@ func (h *handler) setupPage(w http.ResponseWriter, r *http.Request) {
 	required, err := h.setupRequired(r.Context())
 	if err != nil {
 		h.log.Error("admin: could not tell whether setup is needed", slog.String("error", err.Error()))
-		data := pageData{
-			Title: "Setup",
-			Error: "the administrator account could not be read",
-		}
-		data.Back, data.BackLabel = backFor("setup")
+		data := h.pageBase(r, "", "setup")
+		data.Error = data.T.ErrAdminUnreadable
+		data.Back, data.BackLabel = backFor(data.T, "setup")
 		h.render(w, r, "error.html", data)
 		return
 	}
@@ -100,11 +98,7 @@ func (h *handler) setupPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.render(w, r, "setup.html", pageData{
-		Title: "Create administrator",
-		Nav:   "setup",
-		Error: r.URL.Query().Get("err"),
-	})
+	h.render(w, r, "setup.html", h.pageBase(r, "", "setup"))
 }
 
 // createAdministrator implements POST /admin/api/setup.

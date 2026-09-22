@@ -48,6 +48,18 @@ main { padding: 20px; max-width: 1200px; margin: 0 auto; }
 .bar .actor { color: var(--muted); }
 .spacer { flex: 1; }
 
+/* ------------------------------------------------------- language switch */
+
+/* Each entry is labelled in its own language, so the two are not a translation
+ * of each other and neither can be styled as the "real" one. The current one is
+ * marked by weight rather than by colour: colour here would compete with the
+ * accent that means "this is a link". */
+.langs { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.langs a { color: var(--muted); }
+.langs a:hover { color: var(--ink); }
+.langs a.on { color: var(--ink); font-weight: 600; }
+.login .langs { justify-content: center; margin-top: 18px; }
+
 /* --------------------------------------------------------------- controls */
 
 h1 { font-size: 18px; margin: 0 0 12px; }

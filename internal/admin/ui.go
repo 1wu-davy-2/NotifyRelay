@@ -13,10 +13,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"notifyrelay/internal/admin/i18n"
 	"notifyrelay/internal/channel"
 	"notifyrelay/internal/config"
 	"notifyrelay/internal/router"
@@ -26,64 +26,74 @@ import (
 //go:embed templates/*.html static/* samples/*
 var assets embed.FS
 
-// pages holds one parsed template set per page.
+// pages holds one parsed template set per language.
 //
 // Parsed at startup rather than per request: a template error is then a failure
 // to start, which is a great deal easier to notice than a 500 on a page nobody
 // opened until the day they needed it.
-var pages = template.Must(template.New("").Funcs(templateFuncs).ParseFS(assets, "templates/*.html"))
+//
+// One set per language rather than one set with the language threaded through
+// it, because the two template functions that produce copy — the relative time
+// and the timestamp — have no way to reach the page's data. A template function
+// sees its arguments and nothing else, so a closure over the language is the
+// only mechanism that reaches it. Parsing the templates once more at startup
+// costs a few milliseconds and removes the problem entirely.
+var pages = func() map[i18n.Lang]*template.Template {
+	sets := make(map[i18n.Lang]*template.Template, len(i18n.Langs))
+	for _, l := range i18n.Langs {
+		sets[l] = template.Must(
+			template.New("").Funcs(templateFuncs(l)).ParseFS(assets, "templates/*.html"))
+	}
+	return sets
+}()
 
-var templateFuncs = template.FuncMap{
-	// stamp renders a time the way somebody reading a log wants it: local, to
-	// the second, and blank rather than year-zero for an unset field.
-	"stamp": func(t time.Time) string {
-		if t.IsZero() {
-			return ""
-		}
-		return t.Local().Format("2006-01-02 15:04:05")
-	},
-	"since": func(t time.Time) string {
-		if t.IsZero() {
-			return ""
-		}
-		d := time.Since(t)
-		switch {
-		case d < time.Minute:
-			return "just now"
-		case d < time.Hour:
-			return fmt.Sprintf("%dm ago", int(d.Minutes()))
-		case d < 48*time.Hour:
-			return fmt.Sprintf("%dh ago", int(d.Hours()))
-		default:
-			return fmt.Sprintf("%dd ago", int(d.Hours()/24))
-		}
-	},
-	"lower": strings.ToLower,
-	"join":  strings.Join,
+func templateFuncs(l i18n.Lang) template.FuncMap {
+	m := i18n.For(l)
 
-	// list builds a slice inline, for templates that iterate a fixed set of
-	// names. Go templates have no slice literal.
-	"list": func(items ...string) []string { return items },
+	return template.FuncMap{
+		// stamp renders a time the way somebody reading a log wants it: local,
+		// to the second, and blank rather than year-zero for an unset field.
+		"stamp": m.Stamp,
+		"since": m.Since,
 
-	// quotaValue reads one field of a quota by name, so the form's allowance
-	// section is generated from the same five names the store uses rather than
-	// from five hand-written inputs that can fall out of step with it.
-	"quotaValue": func(q config.QuotaConfig, field string) int {
-		switch field {
-		case "per_second":
-			return q.PerSecond
-		case "per_minute":
-			return q.PerMinute
-		case "per_hour":
-			return q.PerHour
-		case "per_day":
-			return q.PerDay
-		case "per_month":
-			return q.PerMonth
-		default:
-			return 0
-		}
-	},
+		"lower": strings.ToLower,
+		"join":  strings.Join,
+
+		// list builds a slice inline, for templates that iterate a fixed set of
+		// names. Go templates have no slice literal.
+		"list": func(items ...string) []string { return items },
+
+		// quotaValue reads one field of a quota by name, so the form's allowance
+		// section is generated from the same five names the store uses rather
+		// than from five hand-written inputs that can fall out of step with it.
+		"quotaValue": func(q config.QuotaConfig, field string) int {
+			switch field {
+			case "per_second":
+				return q.PerSecond
+			case "per_minute":
+				return q.PerMinute
+			case "per_hour":
+				return q.PerHour
+			case "per_day":
+				return q.PerDay
+			case "per_month":
+				return q.PerMonth
+			default:
+				return 0
+			}
+		},
+
+		// json renders a value into a script block. Used for the two blocks the
+		// page carries as data rather than as markup: the channel catalogue and
+		// the script's string table.
+		"json": func(v any) template.JS {
+			out, err := marshalForScript(v)
+			if err != nil {
+				return template.JS("null")
+			}
+			return template.JS(out)
+		},
+	}
 }
 
 // ---------------------------------------------------------------- view models
@@ -271,6 +281,21 @@ type pageData struct {
 	Actor string
 	Nav   string
 
+	// Lang is the language this page is being rendered in, T is that language's
+	// copy table, and HTMLTag is the value for the html element's lang
+	// attribute.
+	//
+	// Every template reads its words from T. The table is a struct, so a
+	// template naming a field that does not exist is a parse error at startup
+	// rather than a blank space on a page.
+	Lang    i18n.Lang
+	T       *i18n.Messages
+	HTMLTag string
+
+	// LangSwitch is the list of languages this build has, each with a link that
+	// selects it and returns to this page.
+	LangSwitch []langOption
+
 	// Flash is a message from the previous action, carried in the query string
 	// rather than in a session: a redirect after a form post should say what
 	// happened, and a one-shot query parameter is the smallest thing that does.
@@ -295,28 +320,42 @@ type pageData struct {
 // wrong page for everything that is not the channel list — and it was worst
 // exactly where it mattered most, since a failed delivery lookup offered a
 // detour through channel configuration.
-var navHome = map[string]struct{ Href, Label string }{
-	"channels":   {"/admin/channels", "Back to channels"},
-	"deliveries": {"/admin/deliveries", "Back to deliveries"},
-	"audit":      {"/admin/audit", "Back to the audit trail"},
-	"keys":       {"/admin/keys", "Back to API keys"},
-	"api-docs":   {"/admin/api-docs", "Back to the API reference"},
-	"setup":      {"/admin/setup", "Back to setup"},
+var navHome = map[string]string{
+	"channels":   "/admin/channels",
+	"deliveries": "/admin/deliveries",
+	"audit":      "/admin/audit",
+	"keys":       "/admin/keys",
+	"api-docs":   "/admin/api-docs",
+	"setup":      "/admin/setup",
 }
 
-// backFor resolves a nav key to the error page's link, defaulting to the
-// channel list so an unrecognised page still offers somewhere to go.
-func backFor(nav string) (string, string) {
-	if home, ok := navHome[nav]; ok {
-		return home.Href, home.Label
+// backFor resolves a nav key to the error page's link and its label, defaulting
+// to the channel list so an unrecognised page still offers somewhere to go.
+func backFor(t *i18n.Messages, nav string) (string, string) {
+	switch nav {
+	case "deliveries":
+		return navHome[nav], t.BackDeliveries
+	case "audit":
+		return navHome[nav], t.BackAudit
+	case "keys":
+		return navHome[nav], t.BackKeys
+	case "api-docs":
+		return navHome[nav], t.BackAPI
+	case "setup":
+		return navHome[nav], t.BackSetup
 	}
-	return "/admin/channels", "Back to channels"
+	return navHome["channels"], t.BackChannels
 }
 
 func (h *handler) render(w http.ResponseWriter, r *http.Request, page string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-	if err := pages.ExecuteTemplate(w, page, data); err != nil {
+	set := pages[langFrom(r.Context())]
+	if set == nil {
+		set = pages[i18n.Default]
+	}
+
+	if err := set.ExecuteTemplate(w, page, data); err != nil {
 		// The header is already sent, so the status cannot be changed. Log it:
 		// a template that fails at render time is a bug that would otherwise
 		// show up as a half-written page.
@@ -361,7 +400,7 @@ func (h *handler) pageHandler(next func(http.ResponseWriter, *http.Request, stri
 
 // loginPage implements GET /admin/login.
 func (h *handler) loginPage(w http.ResponseWriter, r *http.Request) {
-	h.render(w, r, "login.html", pageData{Title: "Sign in"})
+	h.render(w, r, "login.html", h.pageBase(r, "", "login"))
 }
 
 // channelsPage implements GET /admin/channels.
@@ -595,13 +634,45 @@ func (h *handler) auditPage(w http.ResponseWriter, r *http.Request, actor string
 // -------------------------------------------------------------------- helpers
 
 func (h *handler) pageBase(r *http.Request, actor, nav string) pageData {
+	lang := langFrom(r.Context())
+	t := i18n.For(lang)
+
 	return pageData{
-		Title: strings.ToUpper(nav[:1]) + nav[1:],
-		Actor: actor,
-		Nav:   nav,
-		Flash: r.URL.Query().Get("ok"),
-		Error: r.URL.Query().Get("err"),
+		Title:      titleFor(t, nav),
+		Actor:      actor,
+		Nav:        nav,
+		Lang:       lang,
+		T:          t,
+		HTMLTag:    lang.HTMLTag(),
+		LangSwitch: langOptions(r, lang),
+		Flash:      r.URL.Query().Get("ok"),
+		Error:      r.URL.Query().Get("err"),
 	}
+}
+
+// titleFor is a page's title from the copy table.
+//
+// It used to be built from the nav key by capitalising it, which produced
+// "Api-docs" for the reference page and would have produced nothing usable at
+// all once the interface was not in English.
+func titleFor(t *i18n.Messages, nav string) string {
+	switch nav {
+	case "channels":
+		return t.TitleChannels
+	case "deliveries":
+		return t.TitleDeliveries
+	case "audit":
+		return t.TitleAudit
+	case "keys":
+		return t.TitleKeys
+	case "api-docs":
+		return t.TitleAPI
+	case "login":
+		return t.TitleLogin
+	case "setup":
+		return t.TitleSetup
+	}
+	return t.Brand
 }
 
 // renderError shows the error as a page rather than a JSON body.
@@ -616,7 +687,7 @@ func (h *handler) renderError(w http.ResponseWriter, r *http.Request, actor, nav
 
 	data := h.pageBase(r, actor, nav)
 	data.Error = message
-	data.Back, data.BackLabel = backFor(nav)
+	data.Back, data.BackLabel = backFor(data.T, nav)
 	w.WriteHeader(http.StatusInternalServerError)
 	h.render(w, r, "error.html", data)
 }

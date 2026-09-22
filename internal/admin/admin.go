@@ -120,6 +120,15 @@ func NewHandler(d Deps) http.Handler {
 
 	r := chi.NewRouter()
 	r.Use(h.securityHeaders)
+	// Resolved once per request and carried in the context, so the page data,
+	// the template set and the script's string table cannot disagree about which
+	// language they are producing.
+	r.Use(withLang)
+
+	// The language switch. Outside every session check, because the sign-in page
+	// and the first-run page both need a switcher and neither has a session yet —
+	// which is also why the choice is kept in a cookie rather than on a session.
+	r.Get("/lang/{lang}", h.setLanguage)
 
 	// The UI's own assets are served without a session: they contain no data,
 	// and a login page that cannot load its stylesheet looks broken in a way

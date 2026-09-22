@@ -1,36 +1,31 @@
 {{template "head" .}}
 <main class="centred">
   <div class="login">
-    <h1>NotifyRelay</h1>
+    <h1>{{.T.Brand}}</h1>
 
-    <p class="muted">
-      This deployment has no administrator yet. Create one now — this page
-      closes permanently once you do, and it is not reachable again.
-    </p>
+    <p class="muted">{{.T.SetupIntro}}</p>
 
     {{if .Error}}<p class="flash bad">{{.Error}}</p>{{end}}
 
     <form id="setup-form">
-      <label for="username">Username</label>
+      <label for="username">{{.T.SetupUsername}}</label>
       <input type="text" id="username" name="username" autocomplete="username"
              autofocus required>
 
-      <label for="password">Password</label>
+      <label for="password">{{.T.SetupPassword}}</label>
       <input type="password" id="password" name="password"
              autocomplete="new-password" required minlength="8">
 
-      <label for="confirm">Confirm password</label>
+      <label for="confirm">{{.T.SetupConfirm}}</label>
       <input type="password" id="confirm" name="confirm"
              autocomplete="new-password" required minlength="8">
 
-      <button type="submit" class="primary">Create administrator</button>
+      <button type="submit" class="primary">{{.T.SetupSubmit}}</button>
     </form>
 
-    <p class="desc">
-      At least 8 characters. This account can reconfigure where every
-      notification in the estate is delivered, so length is the only rule —
-      a passphrase beats a short password with symbols in it.
-    </p>
+    <p class="desc">{{.T.SetupPasswordWhy}}</p>
+
+    {{template "langs" .}}
   </div>
 </main>
 {{template "foot" .}}

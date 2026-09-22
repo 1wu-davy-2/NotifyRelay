@@ -1,19 +1,19 @@
 {{template "head" .}}
 <main class="centred">
   <form class="card login" id="login-form">
-    <h1>NotifyRelay</h1>
-    <p class="muted">Sign in to manage channels and deliveries.</p>
+    <h1>{{.T.Brand}}</h1>
+    <p class="muted">{{.T.LoginIntro}}</p>
 
-    <label for="username">Username</label>
+    <label for="username">{{.T.LoginUsername}}</label>
     <input id="username" name="username" autocomplete="username" autofocus required>
 
-    <label for="password">Password</label>
+    <label for="password">{{.T.LoginPassword}}</label>
     <input id="password" name="password" type="password" autocomplete="current-password" required>
 
-    <button type="submit" class="primary">Sign in</button>
+    <button type="submit" class="primary">{{.T.LoginSubmit}}</button>
     <p class="flash bad" id="login-error" hidden></p>
+
+    {{template "langs" .}}
   </form>
 </main>
-<script src="/admin/app.js"></script>
-</body>
-</html>
+{{template "foot" .}}

@@ -9,6 +9,52 @@
 
   var CSRF_HEADER = "X-NotifyRelay-Admin";
 
+  /* -------------------------------------------------------------- strings */
+
+  /* The copy the script shows, rendered into the page by the server.
+   *
+   * It is in the page rather than fetched, because the script needs it before
+   * it can report a failure, and a request that can fail is a second failure
+   * mode on the path that exists to report the first one.
+   *
+   * A missing key falls back to the key's own name. That is wrong, and
+   * deliberately visible: a blank message reads as "the button did nothing",
+   * which is the hardest kind of bug to describe in a report. */
+  var T = (function () {
+    var node = document.getElementById("i18n");
+    if (!node) { return {}; }
+    try { return JSON.parse(node.textContent) || {}; } catch (e) { return {}; }
+  })();
+
+  function t(key) {
+    var value = T[key];
+    if (typeof value !== "string" || value === "") { return key; }
+    return value;
+  }
+
+  /* fill substitutes the table's placeholders in order.
+   *
+   * Only %s and %d, which is the whole set the table is allowed to use — a
+   * translator has to be able to reorder the sentence, and that only works if
+   * the values are positional rather than baked into a concatenation. */
+  function fill(template, values) {
+    var i = 0;
+    return template.replace(/%[sd]/g, function () {
+      return i < values.length ? String(values[i++]) : "";
+    });
+  }
+
+  /* testMessage renders a connectivity check's outcome.
+   *
+   * The detail comes from the channel and is English: it names what the channel
+   * did, and translating it would mean a copy table per channel package. It is
+   * shown after the outcome rather than instead of it, so the sentence the
+   * operator reads first is in their own language. */
+  function testMessage(res) {
+    if (res.ok) { return fill(t("TestOK"), [res.detail || ""]); }
+    return fill(t("TestFailed"), [res.class || "", res.error || res.detail || ""]);
+  }
+
   /* ---------------------------------------------------------------- flash */
 
   /* A flash message rides in the query string so a redirect after a form post
@@ -261,7 +307,7 @@
 
     function saved(res) {
       if (res && res.live === false) {
-        say(result, "Saved, but the running service refused it: " + res.reload, false);
+        say(result, fill(t("SavedButNotLive"), [res.reload]), false);
         return;
       }
       window.location.href = "/admin/channels?ok=" +
@@ -291,7 +337,7 @@
         /* Reachable only if the type picker's required attribute is bypassed.
          * Saying so beats the TypeError that would otherwise surface as a
          * button that does nothing. */
-        say(result, "Choose a channel type first.", false);
+        say(result, t("ChooseTypeFirst"), false);
         return;
       }
 
@@ -305,14 +351,11 @@
       testButton.addEventListener("click", function () {
         var name = document.getElementById("channel-name").value;
         if (!name) {
-          say(result, "Save the channel before testing it.", false);
+          say(result, t("SaveBeforeTest"), false);
           return;
         }
         request("POST", "/admin/api/channels/" + encodeURIComponent(name) + "/test")
-          .then(function (res) {
-            say(result, res.ok ? "OK — " + res.detail
-                               : res.class + " — " + (res.error || res.detail), res.ok);
-          })
+          .then(function (res) { say(result, testMessage(res), res.ok); })
           .catch(function (err) { say(result, err.message, false); });
       });
     }
@@ -326,18 +369,13 @@
 
     if (target.dataset.test) {
       request("POST", "/admin/api/channels/" + encodeURIComponent(target.dataset.test) + "/test")
-        .then(function (res) {
-          window.alert(res.ok ? "OK — " + res.detail
-                              : res.class + " — " + (res.error || res.detail));
-        })
+        .then(function (res) { window.alert(testMessage(res)); })
         .catch(function (err) { window.alert(err.message); });
     }
 
     if (target.dataset.resetBreaker) {
       var name = target.dataset.resetBreaker;
-      if (!window.confirm("Reset the breaker for " + name + "?\n\n" +
-                          "This clears a protection that was switched on because the channel " +
-                          "kept failing. It does not drain the queue or return any allowance.")) {
+      if (!window.confirm(fill(t("ConfirmResetBreaker"), [name]))) {
         return;
       }
       request("POST", "/admin/api/channels/" + encodeURIComponent(name) + "/breaker/reset")
@@ -350,8 +388,7 @@
 
     if (target.dataset.delete) {
       var channel = target.dataset.delete;
-      if (!window.confirm("Delete channel " + channel + "?\n\n" +
-                          "Deliveries already queued for it will fail.")) {
+      if (!window.confirm(fill(t("ConfirmDeleteChan"), [channel]))) {
         return;
       }
       request("DELETE", "/admin/api/channels/" + encodeURIComponent(channel))
@@ -372,11 +409,7 @@
 
     if (target.dataset.deleteKey) {
       var keyName = target.dataset.keyName;
-      if (!window.confirm("Delete the key " + keyName + "?\n\n" +
-                          "Anything still using it stops working immediately. " +
-                          "There is no way to restore it — the token itself was " +
-                          "never stored, so a replacement has to be created and " +
-                          "put wherever this one was.")) {
+      if (!window.confirm(fill(t("ConfirmDeleteKey"), [keyName]))) {
         return;
       }
       request("DELETE", "/admin/api/keys/" + encodeURIComponent(target.dataset.deleteKey))
@@ -388,9 +421,7 @@
 
     if (target.dataset.replay) {
       var id = target.dataset.replay;
-      if (!window.confirm("Replay delivery " + id + "?\n\n" +
-                          "It goes back to the queue with a fresh attempt budget and will be " +
-                          "delivered again.")) {
+      if (!window.confirm(fill(t("ConfirmReplay"), [id]))) {
         return;
       }
       request("POST", "/admin/api/deliveries/" + encodeURIComponent(id) + "/replay")
@@ -409,7 +440,7 @@
       var input = document.getElementById("key-name");
       var name = input.value.trim();
       if (!name) {
-        window.alert("Give the key a name first — it is what the audit trail will show.");
+        window.alert(t("GiveKeyAName"));
         return;
       }
 
@@ -436,7 +467,7 @@
     if (!dialog) {
       // No dialog support: the token is still the thing the operator needs, so
       // it goes somewhere they can read it rather than nowhere.
-      window.prompt("Copy this now — it is not shown again:", token);
+      window.prompt(t("PromptCopyToken"), token);
       return;
     }
     document.getElementById("token-value").textContent = token;
@@ -477,7 +508,7 @@
       var confirm = document.getElementById("confirm").value;
 
       if (password !== confirm) {
-        window.alert("The two passwords do not match.");
+        window.alert(t("PasswordsDiffer"));
         return;
       }
 
@@ -588,7 +619,7 @@
       document.execCommand("copy");
       done();
     } catch (e) {
-      window.prompt("Copy with Ctrl+C / Cmd+C:", text);
+      window.prompt(t("PromptCopyText"), text);
     }
     document.body.removeChild(area);
   }
