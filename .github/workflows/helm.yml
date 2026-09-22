@@ -1,0 +1,109 @@
+name: helm
+
+# `helm template` renders the chart without a cluster, which is enough to
+# catch the mistakes that matter: a template that references a value the
+# values file does not define, a helper that does not exist, a resource whose
+# name is empty because the include was mistyped.
+#
+# It does not prove the chart installs. Nothing short of `helm install` against
+# a cluster does, and that needs a cluster.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  chart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+
+      - name: Lint
+        run: helm lint deploy/helm/notifyrelay
+
+      # Rendered with the default values, which are the ones a first install
+      # gets. A chart that only works with `--set` is a chart that fails the
+      # first time somebody runs it.
+      - name: Render
+        run: |
+          helm template test deploy/helm/notifyrelay > /tmp/rendered.yaml
+          if [ ! -s /tmp/rendered.yaml ]; then
+            echo "::error::helm template produced nothing"
+            exit 1
+          fi
+          echo "rendered $(wc -l < /tmp/rendered.yaml) lines"
+
+      # Rendering succeeding is not the same as rendering the right thing. A
+      # template that silently produced no Deployment would pass the check
+      # above.
+      - name: The render contains the resources an install needs
+        run: |
+          for kind in Deployment Service ConfigMap; do
+            if ! grep -q "^kind: $kind$" /tmp/rendered.yaml; then
+              echo "::error::the rendered chart has no $kind"
+              exit 1
+            fi
+          done
+          echo "Deployment, Service and ConfigMap are all present"
+
+      - name: The Deployment is a single replica
+        run: |
+          # The queue is one SQLite file. A second replica would be a second
+          # relay with its own queue rather than a copy of this one, so this
+          # is a property of the design rather than a tuning choice.
+          if ! grep -q "replicas: 1" /tmp/rendered.yaml; then
+            echo "::error::the Deployment does not pin replicas to 1"
+            exit 1
+          fi
+
+      - name: The rendered configuration parses
+        run: |
+          # The ConfigMap carries the service's own configuration file. If it
+          # does not parse, the pod crash-loops with a message about YAML
+          # rather than about the setting somebody got wrong.
+          python3 - <<'PY'
+          import re, sys, yaml
+          text = open('/tmp/rendered.yaml').read()
+          # The ConfigMap's config.yaml is a literal block; take it out and
+          # parse it as the service will.
+          m = re.search(r'config\.yaml: \|\n((?:    .*\n|\n)+)', text)
+          if not m:
+              sys.exit('no config.yaml found in the rendered ConfigMap')
+          block = '\n'.join(line[4:] for line in m.group(1).splitlines())
+          doc = yaml.safe_load(block)
+          for key in ('server', 'storage', 'auth', 'retry'):
+              if key not in doc:
+                  sys.exit('the rendered configuration has no %r section' % key)
+          print('the rendered configuration parses and has the expected sections')
+          PY
+
+      - name: Render with a filled-in configuration
+        run: |
+          # The defaults ship with the admin UI off and no channels. This is
+          # the shape a real deployment uses, and it exercises the branches the
+          # defaults do not reach.
+          helm template test deploy/helm/notifyrelay \
+            --set admin.enabled=true \
+            --set config.admin.enabled=true \
+            --set config.admin.username=admin \
+            --set config.admin.password_hash='$argon2id$v=19$m=65536,t=3,p=1$c2FsdHNhbHRzYWx0$aGFzaGhhc2hoYXNoaGFzaGhhc2hoYXNoaGFzaGhhc2g' \
+            --set secrets.NOTIFYRELAY_SECRET_KEY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa= \
+            --set secrets.NOTIFYRELAY_SESSION_KEY=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb= \
+            > /tmp/rendered-full.yaml
+
+          if ! grep -q "^kind: Secret$" /tmp/rendered-full.yaml; then
+            echo "::error::no Secret was rendered from the provided secrets"
+            exit 1
+          fi
+          echo "the chart renders with a Secret and the admin UI enabled"

@@ -169,16 +169,71 @@ systemctl reload notifyrelay     # 发 SIGHUP
 
 ## 8. 还没有被验证的部分
 
-诚实起见，列在这里：
+每一条都写了**触发条件**——不是"以后有空验一下"，是"什么情况下这件事必须被验"。
 
-- **Docker 镜像从未构建过。** 写这份文档的机器上没有 Docker。`docker build` 的
-  构建命令本身（`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build`）在本地验证过，
-  但镜像组装、distroless 基础镜像、非 root 用户下的文件权限都没有实跑过。
-- **Helm chart 从未 `helm install` 过。** 模板能通过 Go 模板解析、values 能被解析，
-  但渲染结果和集群里的行为没验证过。
-- **systemd unit 从未在 systemd 上跑过。**
-- **钉钉与飞书的加签算法没有对真实平台验证过。** 代码和测试注释里都标了。
-- **`SIGHUP` 的信号投递在 Windows 上没有验证**（Windows 没有 SIGHUP）。
-  重载逻辑本身有测试覆盖，未覆盖的是 `signal.Notify` 那一行。
+### 8.1 钉钉 / 飞书加签：未对真实平台验证
 
-这些不是"应该没问题"，是"没试过"。
+代码和测试注释里都标了。**单测过了不等于对端接受**——单测验证的是"我们按文档算出了
+一个签名"，不是"对方的服务器认这个签名"。
+
+**触发条件**：M3 的通道首次接入生产时，用**真实 webhook** 做一次连通性测试
+（后台的"测试连通"按钮会真的发一条）。
+
+签名被拒时的排查顺序：
+
+1. **先查时间戳是否超出对端窗口。** 钉钉的窗口是 **±1 小时**，容器时钟漂移、
+   NTP 没同步、或者跨时区部署都会踩到。这是最常见的原因，也是最容易被忽略的——
+   签名算对了，时间戳不对，一样被拒。
+2. **再查 secret 的编码。** 钉钉加签的 secret 是 `SEC` 开头的字符串，
+   要**原样**参与 HMAC，不要做 base64 解码或 URL 解码。飞书同理。
+   如果 secret 是通过 `!env` 注入的，确认环境变量里没有多余的空格或换行
+   （`echo $SECRET | ...` 写进 `.env` 时会带上换行）。
+
+### 8.2 Docker 镜像：由 CI 验证
+
+**触发条件：`.github/workflows/docker.yml` 在 main 上跑通后，本条撤销。**
+
+该 workflow 做三件事：构建镜像、断言 `--healthcheck` 对不可达地址返回非 0、
+启动容器并断言日志里出现 `listening`。它还顺带覆盖了镜像里最容易错的一处——
+服务以 nonroot 运行而数据目录归 root 所有，容器会在启动时因权限失败。
+
+在那之前，本地验证过的只有构建命令本身：`CGO_ENABLED=0 GOOS=linux GOARCH=amd64`
+产出的确实是 `ELF 64-bit LSB executable, x86-64, statically linked, stripped`。
+镜像组装、基础镜像、非 root 下的文件权限都没实跑过。
+
+### 8.3 Helm chart：由 CI 验证（部分）
+
+**触发条件：`.github/workflows/helm.yml` 在 main 上跑通后，"渲染"部分撤销。**
+
+`helm lint` 加 `helm template` 能证明模板引用的值都存在、资源都渲染得出来、
+ConfigMap 里的配置能解析。**它证明不了 chart 能在集群里装起来**——
+那需要 `helm install` 和一个真实集群。所以这一条只撤销一半：
+"渲染正确"由 CI 保证，"安装成功"仍然待验证。
+
+### 8.4 systemd unit：未在 systemd 上运行过
+
+`deploy/` 里的检查只断言了关键指令存在（`WorkingDirectory`、`ReadWritePaths`、
+`ExecReload`、非 root 用户）。**它证明不了 unit 能启动。**
+
+**触发条件**：首次在 systemd 主机上部署时。
+
+### 8.5 SIGHUP 信号投递：Windows 上无法验证
+
+Windows 没有 SIGHUP。重载逻辑本身有测试覆盖（注入信号通道，断言策略真的变了），
+**未覆盖的是 `signal.Notify` 那一行**。
+
+**触发条件**：首次在 Linux 上用 `systemctl reload` 或 `kill -HUP` 时。
+验法是改一下 `retry.max_attempts`，reload，发一条必然失败的异步投递，数尝试次数。
+
+### 8.6 M5 验收 #10：15 分钟真人验证
+
+**待真人验证。** 前提：一台有 Docker 或能跑静态二进制的 Linux，加一个可用的上游
+SMTP。找一位**没读过本项目**的同事，只给 README，限时 15 分钟，
+看他能不能完成部署并发出一条通知。
+
+这条不能自己验——自己验的时候脑子里已经有那 15 分钟里不该有的东西。
+
+---
+
+这些不是"应该没问题"，是"没试过"。**单测过了不等于对端接受；
+本地能构建不等于镜像能跑。** 写清楚未验证，比假装验证过更可信。

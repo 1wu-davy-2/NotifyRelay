@@ -264,3 +264,117 @@ func TestComposePassesSecretsThroughRatherThanDefaulting(t *testing.T) {
 		t.Error("the database is not on a named volume")
 	}
 }
+
+// The container has to be able to write its database on a fresh volume.
+//
+// This is the check that would have caught the original Dockerfile: it set a
+// WORKDIR, which Docker creates owned by root, and the service runs as
+// nonroot. The directory therefore has to exist in the image already, owned by
+// the right user — which is also what makes Docker seed a *named volume* with
+// that ownership rather than with root's.
+func TestDockerfileCreatesAWritableDataDirectory(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(root, "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	dockerfile := directivesOnly(string(raw), "#")
+
+	if !strings.Contains(dockerfile, "mkdir -p /out/app/data") {
+		t.Error("the data directory is not created in the build stage; " +
+			"a named volume mounted at a path that does not exist in the image is owned by root")
+	}
+	if !strings.Contains(dockerfile, "COPY --chown=65532:65532 --from=build /out/app /app") {
+		t.Error("the data directory is not copied in with the nonroot user's ownership; " +
+			"the service runs as nonroot and would fail to create its database")
+	}
+	// The final stage is distroless and has no shell, so a RUN here would be a
+	// build failure rather than a fix.
+	if strings.Contains(dockerfile, "RUN chown") || strings.Contains(dockerfile, "RUN chmod") {
+		t.Error("the final stage uses RUN; distroless has no shell to run it with")
+	}
+}
+
+// Workflows are YAML, and a workflow that does not parse does not run — it
+// reports nothing at all, which looks exactly like a passing build until
+// somebody notices the checks never ran.
+func TestWorkflowsParse(t *testing.T) {
+	dir := filepath.Join(root, ".github", "workflows")
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("no workflows")
+	}
+
+	for _, entry := range entries {
+		t.Run(entry.Name(), func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+			if err != nil {
+				t.Fatalf("read: %v", err)
+			}
+
+			var doc struct {
+				On   any `yaml:"on"`
+				Jobs map[string]struct {
+					RunsOn string `yaml:"runs-on"`
+					Steps  []struct {
+						Run  string `yaml:"run"`
+						Uses string `yaml:"uses"`
+					} `yaml:"steps"`
+				} `yaml:"jobs"`
+			}
+			if err := yaml.Unmarshal(raw, &doc); err != nil {
+				t.Fatalf("does not parse: %v", err)
+			}
+			if doc.On == nil {
+				t.Error("no trigger; the workflow would never run")
+			}
+			if len(doc.Jobs) == 0 {
+				t.Fatal("no jobs")
+			}
+
+			for name, job := range doc.Jobs {
+				if job.RunsOn == "" {
+					t.Errorf("job %q has no runs-on", name)
+				}
+				if len(job.Steps) == 0 {
+					t.Errorf("job %q has no steps", name)
+				}
+				for i, step := range job.Steps {
+					if step.Run == "" && step.Uses == "" {
+						t.Errorf("job %q step %d neither runs nor uses anything", name, i)
+					}
+				}
+			}
+		})
+	}
+}
+
+// A step that only checks something must be able to fail. Every assertion in
+// these workflows ends in `exit 1`, and a check written as a bare `grep` would
+// fail the step by accident of shell semantics rather than on purpose — which
+// works until somebody adds `|| true` to silence an unrelated noise.
+func TestWorkflowsAssertWithAnExplicitFailure(t *testing.T) {
+	dir := filepath.Join(root, ".github", "workflows")
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+
+	for _, entry := range entries {
+		raw, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		body := string(raw)
+
+		// Every workflow here exists to assert something, so every one of them
+		// should contain a deliberate failure path.
+		if !strings.Contains(body, "exit 1") {
+			t.Errorf("%s has no `exit 1`: nothing in it can fail the build", entry.Name())
+		}
+	}
+}

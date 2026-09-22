@@ -10,6 +10,9 @@ A unified notification relay for internal services: one integration upstream
 (HTTP API / SMTP), many channels downstream — email, webhook, Slack, DingTalk,
 Feishu and WeCom.
 
+[![docker](https://github.com/1wu-davy-2/NotifyRelay/actions/workflows/docker.yml/badge.svg)](https://github.com/1wu-davy-2/NotifyRelay/actions/workflows/docker.yml)
+[![helm](https://github.com/1wu-davy-2/NotifyRelay/actions/workflows/helm.yml/badge.svg)](https://github.com/1wu-davy-2/NotifyRelay/actions/workflows/helm.yml)
+
 **[中文](#中文) · [English](#english)**
 
 ---

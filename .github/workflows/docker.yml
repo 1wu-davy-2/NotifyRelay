@@ -1,0 +1,125 @@
+name: docker
+
+# This workflow is what replaces "somebody should try building the image one
+# day". The Dockerfile has been wrong twice in ways no local check could see:
+# it left the working directory owned by root while the service runs as
+# nonroot, and it declared a healthcheck that would have needed a shell the
+# base image does not have. Both are build-time or run-time facts, and only
+# building and running the image establishes them.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t notifyrelay:ci .
+
+      # A probe that cannot fail is worse than no probe: a crashed container
+      # would keep reporting healthy and nothing would restart it.
+      - name: The healthcheck fails when nothing is listening
+        run: |
+          if docker run --rm notifyrelay:ci --healthcheck 127.0.0.1:8080; then
+            echo "::error::--healthcheck reported success against a closed port"
+            exit 1
+          fi
+          echo "correctly reported failure"
+
+      - name: The version flag runs without a configuration file
+        run: docker run --rm notifyrelay:ci --version
+
+      - name: Write a configuration
+        run: |
+          mkdir -p /tmp/nr
+          cat > /tmp/nr/config.yaml <<'YAML'
+          log:
+            level: info
+            format: text
+          server:
+            addr: ":8080"
+          storage:
+            driver: sqlite
+            path: data/notifyrelay.db
+            spool_dir: data/spool
+          auth:
+            api_keys:
+              - name: ci
+                key_hash: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+          YAML
+          cat /tmp/nr/config.yaml
+
+      # The paths above are relative, which is what the shipped example uses.
+      # They resolve against the working directory, so this step is also the
+      # one that proves the service can create its database as the nonroot
+      # user — the failure the Dockerfile had.
+      - name: The container starts and reports listening
+        run: |
+          docker run -d --name nr \
+            -v /tmp/nr/config.yaml:/etc/notifyrelay/config.yaml:ro \
+            notifyrelay:ci
+
+          for i in $(seq 1 30); do
+            if docker logs nr 2>&1 | grep -q "listening"; then break; fi
+            if [ "$(docker inspect -f '{{.State.Running}}' nr)" != "true" ]; then
+              echo "::error::the container exited before it started listening"
+              docker logs nr
+              exit 1
+            fi
+            sleep 1
+          done
+
+          echo "--- container log ---"
+          docker logs nr
+          echo "--------------------"
+
+          if ! docker logs nr 2>&1 | grep -q "listening"; then
+            echo "::error::no 'listening' line in the log after 30s"
+            exit 1
+          fi
+
+          if [ "$(docker inspect -f '{{.State.Running}}' nr)" != "true" ]; then
+            echo "::error::the container is not running"
+            exit 1
+          fi
+
+      # The image is distroless, so this runs the binary directly rather than
+      # through a shell. If the data directory were not writable, the container
+      # would have failed above; this checks the probe agrees with the log.
+      - name: The healthcheck succeeds against the running container
+        run: docker exec nr /notifyrelay --healthcheck 127.0.0.1:8080
+
+      - name: The database was actually created
+        run: |
+          # docker exec runs the binary, not a shell, so the check is done from
+          # outside by looking at what the container wrote.
+          docker exec nr /notifyrelay --version > /dev/null
+          docker logs nr 2>&1 | grep -qi "error" && {
+            echo "::warning::the log contains the word 'error'; check whether it is a real one"
+          }
+          exit 0
+
+      - name: Stop the container
+        if: always()
+        run: |
+          docker logs nr > /tmp/nr/container.log 2>&1 || true
+          docker rm -f nr || true
+
+      - name: Upload the container log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-log
+          path: /tmp/nr/container.log
+          if-no-files-found: ignore

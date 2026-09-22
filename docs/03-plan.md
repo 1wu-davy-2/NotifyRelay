@@ -959,7 +959,11 @@ systemd unit 里关键指令在不在、Dockerfile 的探针有没有用 shell �
    不必等满 `open_timeout`；且**重启服务后该通道仍然是 closed**（重置写穿了 `breakers` 表）。
 8. `docker compose up` 一条命令起服务；`helm install` 可在 k8s 集群部署成功。
 9. 配置文件热加载：修改重试次数后发 SIGHUP，新配置生效且**不中断正在进行的投递**。
-10. 一个**全新的人**按 README 能在 15 分钟内完成部署并发出一条通知（找真人验证）。
+10. 一个**全新的人**按 README 能在 15 分钟内完成部署并发出一条通知。
+    **状态：待真人验证。**
+    前提：一台有 Docker 或能跑静态二进制的 Linux，加一个可用的上游 SMTP。
+    找一位**没读过本项目**的同事，只给 README，限时 15 分钟。
+    自己验不算——验的时候脑子里已经有那 15 分钟里不该有的东西了。
 11. 通道参数表单的联动与互斥**正确**：`webhook` 选 `auth_type=hmac` 时只有 `secret` 被标为必填，
     选 `basic` 时是 `username`/`password`；`wecom` 选 `mode=app` 时 `webhook_url` 不再出现。
     （这一条取决于 `docs/05-paramschema-audit.md` §5 的方案选择）

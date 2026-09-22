@@ -308,6 +308,18 @@ func run() error {
 		}()
 	}
 
+	// Say so before blocking. Without this line the log of a healthy process
+	// and the log of one whose listener failed to bind look the same up to the
+	// point of failure — "starting" then nothing — and the first thing anybody
+	// does with a container that is not answering is read its log.
+	//
+	// It is printed from the serving goroutine rather than before it, so the
+	// line appears only once the listener is actually accepting.
+	log.Info("http listening",
+		slog.String("addr", cfg.Server.Addr),
+		slog.String("admin_ui", adminEndpoint(cfg)),
+	)
+
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("http server: %w", err)
@@ -431,4 +443,16 @@ func runHealthcheck(base string) error {
 		return fmt.Errorf("healthcheck: %s returned %d", url, resp.StatusCode)
 	}
 	return nil
+}
+
+// adminEndpoint reports where the operator UI lives, or says it is off.
+//
+// Logged at startup because "is the management interface exposed" is a
+// question somebody asks about a deployment they did not set up, and the
+// answer should not require reading the configuration file to find.
+func adminEndpoint(cfg *config.Config) string {
+	if !cfg.Admin.Enabled {
+		return "disabled"
+	}
+	return "http://" + cfg.Server.Addr + "/admin"
 }

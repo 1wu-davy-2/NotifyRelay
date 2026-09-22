@@ -19,6 +19,20 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags "-s -w" -o /out/notifyrelay ./cmd/notifyrelay
 
+# The data directory has to exist in the image, and it has to be owned by the
+# user the service runs as.
+#
+# Two reasons, and the second is the one that bites. The obvious one is that a
+# container started without a volume needs somewhere to write. The subtle one
+# is that when a *named volume* is mounted at a path that exists in the image,
+# Docker seeds the volume with that directory's contents and ownership — so
+# this is what makes a fresh volume writable by the nonroot user instead of by
+# root. A directory created only at runtime, or by WORKDIR, is owned by root
+# and the service fails at startup with a permission error.
+#
+# distroless has no shell, so this cannot be fixed in the final stage with RUN.
+RUN mkdir -p /out/app/data
+
 
 FROM gcr.io/distroless/static-debian12:nonroot
 
@@ -26,15 +40,18 @@ COPY --from=build /out/notifyrelay /notifyrelay
 COPY --from=build /src/NOTICE /NOTICE
 COPY --from=build /src/LICENSE /LICENSE
 
+# 65532 is the nonroot user in the distroless base. Numeric because the final
+# stage has no /etc/passwd entry to resolve a name against.
+COPY --chown=65532:65532 --from=build /out/app /app
+
 # The working directory is where the database and the spool are written, and
 # the shipped configuration names them with relative paths
-# (`data/notifyrelay.db`, `data/spool`).
+# (`data/notifyrelay.db`, `data/spool`). With this set, the example
+# configuration works unmodified, with the volume mounted at /app/data.
 #
-# It has to be a directory the nonroot user can write to. Left at "/" — which
-# is what a container with no WORKDIR gets — the service fails on first run,
-# because the database is created at startup and "/" belongs to root. Setting
-# it here is what lets the example configuration work unmodified, with the
-# data volume mounted at /app/data.
+# WORKDIR alone would not be enough: Docker creates it owned by root, because
+# the USER below has not taken effect yet. The /app/data copy above is what
+# makes the directory writable.
 WORKDIR /app
 
 USER nonroot:nonroot
