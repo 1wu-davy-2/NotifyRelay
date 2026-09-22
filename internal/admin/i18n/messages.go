@@ -36,6 +36,7 @@ type Messages struct {
 	NavAPI        string
 	NavSignOut    string
 	NavLangSwitch string // accessible label for the language switcher
+	NavStart      string // the first-run checklist, offered only while it is unfinished
 
 	// ---------------------------------------------------------- page titles
 
@@ -51,6 +52,23 @@ type Messages struct {
 	TitleKeys       string
 	TitleAPI        string
 	TitleError      string // the error page, whose heading is the error and not the page
+	TitleStart      string
+
+	// ------------------------------------------------ the first-run checklist
+
+	StartIntro           string
+	StartStepChannel     string
+	StartStepChannelHint string
+	StartStepKey         string
+	StartStepKeyHint     string
+	StartStepTest        string
+	StartStepTestHint    string
+	StartStepResult      string
+	StartStepResultHint  string
+	StartActionGo        string
+	StartStepDone        string
+	StartDoneHead        string
+	StartDoneBody        string
 
 	// ---------------------------------------------------------- shared copy
 
@@ -93,6 +111,18 @@ type Messages struct {
 	SetupSubmit       string
 	SetupPasswordRule string
 
+	// ------------------------------------------------------- change password
+
+	NavPassword     string
+	TitlePassword   string
+	PasswordIntro   string
+	PasswordCurrent string
+	PasswordNew     string
+	PasswordConfirm string
+	PasswordSubmit  string
+	PasswordRule    string
+	PasswordChanged string // %d: how many other sessions were signed out
+
 	// ------------------------------------------- the error page's way out
 
 	// One per page rather than a "Back to %s", because the label names a place
@@ -132,6 +162,14 @@ type Messages struct {
 	ChannelFormQuotaHead   string
 	ChannelFormQuotaDesc   string
 	ChannelFormTestConn    string
+	// ChannelFormListHint is shown under a parameter the schema declares as a
+	// list. The form splits on commas and the schema's own description does not
+	// say so, which leaves the convention undocumented on the page.
+	ChannelFormListHint string
+
+	// The edit form for a channel that is not there.
+	ChannelGoneHead string // %s: the name that was asked for
+	ChannelGoneBody string // %s: the name that was asked for
 
 	// Sending a real notification through a channel, which is the only thing on
 	// this page that proves a notification arrives.
@@ -324,6 +362,8 @@ type Messages struct {
 	ErrBadCredentials        string
 	ErrSignInFirst           string
 	ErrSessionExpired        string
+	ErrPasswordInConfig      string
+	ErrPasswordChangeFailed  string
 	ErrMissingCSRF           string // %s: the header's name
 }
 
@@ -382,4 +422,13 @@ type Script struct {
 
 	// DiscardChanges guards a form that has been edited and not saved.
 	DiscardChanges string
+
+	// PasswordSet is the fallback for a password change whose response carried
+	// no message. The server always sends one — it is the only side that knows
+	// how many sessions ended — so this is for the case where it did not.
+	PasswordSet string
+
+	// FixMarkedFields replaces the summary when every complaint found a field to
+	// sit under. Repeating them at the bottom would be the same sentences twice.
+	FixMarkedFields string
 }

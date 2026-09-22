@@ -165,6 +165,11 @@ func NewHandler(d Deps) http.Handler {
 		pr.Get("/", h.pageHandler(func(w http.ResponseWriter, r *http.Request, _ string) {
 			http.Redirect(w, r, "/admin/channels", http.StatusFound)
 		}))
+		// The four steps from a fresh deployment to a notification that has
+		// actually arrived. The first-run setup lands here; the navigation
+		// offers it until the last step is done.
+		pr.Get("/start", h.pageHandler(h.startPage))
+
 		pr.Get("/channels", h.pageHandler(h.channelsPage))
 		pr.Get("/deliveries", h.pageHandler(h.deliveriesPage))
 		pr.Get("/deliveries/{id}", h.pageHandler(h.deliveryPage))
@@ -179,6 +184,8 @@ func NewHandler(d Deps) http.Handler {
 		// under /api/ answers JSON, and a page that returned HTML from there
 		// would be the one exception somebody has to remember.
 		pr.Get("/api-docs", h.pageHandler(h.apiDocsPage))
+
+		pr.Get("/password", h.pageHandler(h.passwordPage))
 	})
 
 	r.Group(func(pr chi.Router) {
@@ -201,6 +208,8 @@ func NewHandler(d Deps) http.Handler {
 		pr.Get("/api/stats", h.stats)
 
 		pr.Get("/api/audit", h.listAudit)
+
+		pr.Post("/api/password", h.changePassword)
 
 		pr.Get("/api/keys", h.listKeys)
 		pr.Post("/api/keys", h.createKey)

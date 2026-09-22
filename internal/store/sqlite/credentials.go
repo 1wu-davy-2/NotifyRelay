@@ -161,6 +161,24 @@ func (s *Store) CreateAdminCredential(ctx context.Context, c *store.AdminCredent
 	return n > 0, nil
 }
 
+// SetAdminPassword implements store.AdminCredentials.
+//
+// An UPDATE with no insert path. The caller has already proved it can
+// authenticate; what it must not be able to do is create the account it is
+// changing, and "UPDATE ... ON CONFLICT DO UPDATE" or an upsert would let it.
+func (s *Store) SetAdminPassword(ctx context.Context, hash string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE admin_credentials SET password_hash = ? WHERE id = 1`, hash)
+	if err != nil {
+		return false, fmt.Errorf("sqlite: set admin password: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("sqlite: set admin password: %w", err)
+	}
+	return n > 0, nil
+}
+
 // ---------------------------------------------------------------- scanning
 
 func scanAPIKey(sc scanner) (*store.APIKey, error) {

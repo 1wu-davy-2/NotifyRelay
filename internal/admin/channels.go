@@ -188,7 +188,7 @@ func (h *handler) saveChannel(w http.ResponseWriter, r *http.Request) {
 	// Storing first and discovering the problem at reload time would leave the
 	// database holding a configuration the service cannot run.
 	if err := validateChannel(cfg); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_config", err.Error())
+		writeValidationError(w, err)
 		return
 	}
 
@@ -367,23 +367,76 @@ func (h *handler) listAudit(w http.ResponseWriter, r *http.Request) {
 
 // ------------------------------------------------------------------ helpers
 
-// validateChannel builds the channel and checks its parameters against its own
-// schema, which is what router.New does at startup.
+// writeValidationError reports a configuration the channel itself refused.
 //
-// Doing it here means an operator finds out while looking at the form rather
-// than after saving and restarting. It is the same two calls in the same order,
-// deliberately: a validation that differed from the one that runs at boot would
-// be worse than none.
+// The message goes out whole, and the parts that name a parameter go out again
+// keyed by that parameter's schema name. The form uses the second to put each
+// complaint under the box it is about, and the first for everything else — an
+// unknown key, or a pair of parameters that are only wrong together.
+//
+// Both are sent rather than only the structured form. The message is what the
+// API has always returned and what a script reading this endpoint expects; the
+// map is an addition, and a client that ignores it loses nothing.
+func writeValidationError(w http.ResponseWriter, err error) {
+	body := map[string]any{
+		"error":   "invalid_config",
+		"message": err.Error(),
+	}
+
+	named, _ := channel.SplitErrors(err)
+	if len(named) == 0 {
+		writeJSON(w, http.StatusBadRequest, body)
+		return
+	}
+
+	byField := make(map[string]string, len(named))
+	for _, fe := range named {
+		// First one wins. Two sentences under one box is a box nobody reads,
+		// and the schema's checks run in a fixed order, so "first" is stable.
+		if _, seen := byField[fe.Field]; !seen {
+			byField[fe.Field] = fe.Message
+		}
+	}
+	body["fields"] = byField
+
+	writeJSON(w, http.StatusBadRequest, body)
+}
+
+// validateChannel runs the two checks router.New runs at startup, so an
+// operator finds out while looking at the form rather than after a restart.
+//
+// The two checks are the same; the order is not, and that is deliberate.
+//
+// The router builds the channel first and validates second, which means it
+// stops at the first missing parameter — correct for a service that is refusing
+// to start, and wrong for a form. A form that refuses one thing per save is
+// four round trips to learn four things, so the schema check runs first: it
+// reports every problem at once.
+//
+// The set of configurations accepted is identical either way, because boot
+// makes both calls. Only which complaint arrives first changes, and it changes
+// to the more complete one.
+//
+// The schema comes from the registered descriptor rather than from a built
+// instance. Every channel's ParamSchema returns a package-level declaration
+// with no instance state in it, so the two are the same list — and taking it
+// from the descriptor is what lets the schema check run before the constructor
+// has agreed to build anything.
 func validateChannel(cfg config.ChannelConfig) error {
-	if !channel.IsRegistered(cfg.Type) {
+	descriptor, ok := channel.Lookup(cfg.Type)
+	if !ok {
 		return fmt.Errorf("unknown channel type %q (registered: %v)", cfg.Type, channel.Registered())
 	}
 
-	ch, err := channel.New(cfg.Type, cfg.Name, cfg.Config)
-	if err != nil {
+	if err := channel.ValidateParams(cfg.Type, descriptor.ParamSchema, cfg.Config); err != nil {
 		return err
 	}
-	return channel.ValidateParams(cfg.Type, ch.ParamSchema(), cfg.Config)
+
+	// Then the constructor, which catches what no single field can express: a
+	// password with no username, or a mode whose parameters contradict each
+	// other.
+	_, err := channel.New(cfg.Type, cfg.Name, cfg.Config)
+	return err
 }
 
 // reload rebuilds the router from the stored configuration.

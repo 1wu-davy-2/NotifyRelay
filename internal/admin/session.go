@@ -92,6 +92,28 @@ func (s *sessions) end(id string) {
 	delete(s.entries, id)
 }
 
+// endOthers removes every session except one, returning how many went.
+//
+// Used after a password change. The usual reason to change a password is the
+// belief that somebody else knows it, and a change that leaves that person's
+// session alive has not done the thing it was for. The session making the
+// change is kept: throwing the operator out of the page they are looking at
+// would leave them unable to tell a successful change from a failed one.
+func (s *sessions) endOthers(keep string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ended := 0
+	for id := range s.entries {
+		if id == keep {
+			continue
+		}
+		delete(s.entries, id)
+		ended++
+	}
+	return ended
+}
+
 // count reports how many sessions are live, for tests.
 func (s *sessions) count() int {
 	s.mu.Lock()

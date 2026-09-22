@@ -270,6 +270,15 @@ type AdminCredentials interface {
 	// the same moment would both pass the check, and whoever wrote second would
 	// silently take the deployment.
 	CreateAdminCredential(ctx context.Context, c *AdminCredential) (bool, error)
+
+	// SetAdminPassword replaces the stored administrator's password hash,
+	// reporting whether there was a credential to replace.
+	//
+	// Conditional like Create, and for the same reason in reverse: this must not
+	// be able to bring an account into existence. A password change is not a way
+	// in, and an UPDATE that inserted would be one on a deployment whose
+	// administrator was never created.
+	SetAdminPassword(ctx context.Context, hash string) (bool, error)
 }
 
 // Filter narrows a delivery query.

@@ -1,7 +1,6 @@
 package channel
 
 import (
-	"fmt"
 	"time"
 )
 
@@ -15,21 +14,21 @@ import (
 // M2 layers schema-driven validation on top of these; they stay the primitive.
 
 func typeErr(name string, got any, want string) error {
-	return fmt.Errorf("parameter %q: expected %s, got %T", name, want, got)
+	return fieldErr(name, "parameter %q: expected %s, got %T", name, want, got)
 }
 
 // StringParam reads a required string parameter.
 func StringParam(cfg map[string]any, name string) (string, error) {
 	v, ok := cfg[name]
 	if !ok || v == nil {
-		return "", fmt.Errorf("parameter %q is required", name)
+		return "", fieldErr(name, "parameter %q is required", name)
 	}
 	s, ok := v.(string)
 	if !ok {
 		return "", typeErr(name, v, "a string")
 	}
 	if s == "" {
-		return "", fmt.Errorf("parameter %q must not be empty", name)
+		return "", fieldErr(name, "parameter %q must not be empty", name)
 	}
 	return s, nil
 }
@@ -63,7 +62,7 @@ func IntParamOr(cfg map[string]any, name string, def int) (int, error) {
 		return int(n), nil
 	case float64:
 		if n != float64(int(n)) {
-			return 0, fmt.Errorf("parameter %q: expected a whole number, got %v", name, n)
+			return 0, fieldErr(name, "parameter %q: expected a whole number, got %v", name, n)
 		}
 		return int(n), nil
 	default:
@@ -162,10 +161,10 @@ func DurationParamOr(cfg map[string]any, name string, def time.Duration) (time.D
 	}
 	d, err := time.ParseDuration(s)
 	if err != nil {
-		return 0, fmt.Errorf("parameter %q: %w", name, err)
+		return 0, wrapFieldErr(name, err, "parameter %q: %v", name, err)
 	}
 	if d <= 0 {
-		return 0, fmt.Errorf("parameter %q must be greater than zero, got %q", name, s)
+		return 0, fieldErr(name, "parameter %q must be greater than zero, got %q", name, s)
 	}
 	return d, nil
 }
@@ -193,7 +192,7 @@ func StringSliceParam(cfg map[string]any, name string) ([]string, error) {
 		for i, item := range t {
 			s, ok := item.(string)
 			if !ok {
-				return nil, fmt.Errorf("parameter %q[%d]: expected a string, got %T", name, i, item)
+				return nil, fieldErr(name, "parameter %q[%d]: expected a string, got %T", name, i, item)
 			}
 			if s == "" {
 				continue

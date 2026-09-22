@@ -73,6 +73,10 @@ cookie 会随进程重启一起失效，而不是一直有效到过期。
 `/healthz`、`/readyz`、`/metrics`、`POST /admin/api/login`、`POST /admin/api/logout`、
 `GET /admin/login`、`GET /admin/setup`、`GET /admin/lang/{lang}`、管理后台的静态资源。
 
+后台的页面路由（都需要会话）：`/admin/start`（上手清单）、`/admin/channels`、
+`/admin/deliveries`、`/admin/deliveries/{id}`、`/admin/audit`、`/admin/keys`、
+`/admin/api-docs`、`/admin/password`。
+
 `/metrics` 不鉴权是刻意的：抓取端不该需要凭据，它暴露的是计数不是内容。
 它绑定在服务监听的地址上，想让它私有，改 `server.addr`。
 
@@ -99,6 +103,11 @@ cookie 会随进程重启一起失效，而不是一直有效到过期。
 > 界面文案的表在 `internal/admin/i18n`，是**结构体**不是 map：漏翻一条是编译错误，
 > 而不是运行时空白。审计记录里的 `detail`（`created`、`changed: host` 等）**刻意不翻译**——
 > 它们是记录不是界面文案，翻译会让同一张表混两种语言且历史记录无法统一。
+
+**`GET /admin/start` 的清单是查出来的，不是记下来的。** 四步分别是
+「有渠道 / 有密钥 / 发过通知 / 看过结果」，每一步都是当场问服务要的事实，
+所以删掉唯一那个渠道之后第一步会重新变成未完成。存一个勾选状态做不到这一点，
+而一个谎报进度的页面比没有这个页面更糟。左侧导航只在还有未完成步骤时才显示这个入口。
 
 ---
 
@@ -498,6 +507,42 @@ X-Frame-Options: DENY
 
 **200**，形状同登录响应。用来让前端确认会话还有效。
 
+#### `POST /admin/api/password` — 修改管理员密码
+
+需要 CSRF 头。
+
+```json
+{ "current_password": "...", "new_password": "..." }
+```
+
+**200** `{"sessions_ended": 2, "message": "密码已修改，另外 2 个会话已被登出。"}`。
+
+**要改的是会话自己的账号**，不是请求体里给的名字——请求体里根本没有名字。
+后台只有一个账号，而一个能指定目标的改密接口就是改别人密码的接口。
+
+**改完会踢掉其它所有会话。** 改密码的常见原因是「我觉得别人知道了」，
+而留着对方的会话等于没做这件事。**发起改密的这个会话保留**，
+否则运维会对着登录页，分不清是改成功了还是改失败了。
+
+**走登录那套退避**：这个端点校验密码，所以它就是一个可以被猜的端点，
+不能是唯一没有锁的那个。
+
+| 状态码 | `error` | 触发 |
+|---|---|---|
+| 400 | `invalid_request` | JSON 错 / 新密码短于 8 位 |
+| 401 | `invalid_credentials` | 当前密码不对（同样计入退避） |
+| 409 | `password_in_config` | 这个账号的密码来自配置文件，不在这里改 |
+| 409 | `no_credential` | 认证通过后账号行消失了 |
+| 501 | `unavailable` | 本部署没有账号存储 |
+
+> **`password_in_config` 不是失败，是实话。** 配置里写了 `admin.password_hash` 的部署，
+> 改这里没有意义——重启之后配置里的那把又回来了。响应里说清楚了要改哪儿。
+>
+> **没有找回。** 忘了密码只能改数据库或者写配置重启。找回需要第二凭据或邮件通道，
+> 两者这里都没有，草率做一个比写清楚「只能这样」更糟。
+
+审计动作：`admin.password`。
+
 ### 5.2 渠道
 
 #### `GET /admin/api/channels`
@@ -550,7 +595,7 @@ X-Frame-Options: DENY
 | 200 | `{"saved":true,"live":true}` | 保存成功、重载成功，但回读失败 |
 | 202 | `{"saved":true,"live":false,"reload":"<错误>"}` | 已落库且合法，但路由拒绝了它 |
 | 400 | `invalid_request` | JSON 错 / 未知字段 / 名字为空 |
-| 400 | `invalid_config` | `channel.New` 或 `ValidateParams` 失败，消息会点名参数 |
+| 400 | `invalid_config` | 配置校验失败，消息会点名参数，并另带一个 `fields` 映射（见下） |
 | 400 | `save_failed` | 写库失败 |
 | 409 | `name_taken` | `editing="__new__"` 且名字已存在、未带 `replace` |
 | 500 | `internal` | 合并前后读取失败 |
@@ -558,7 +603,51 @@ X-Frame-Options: DENY
 > **202 是「存下来了但没生效」**，不是失败。响应里的 `reload` 说明为什么。
 > 客户端应当把它当成功处理，但要提示运维去看日志。
 
+**`invalid_config` 多带一个 `fields`。** 消息本身没变（它一直是 `errors.Join` 拼出来的，
+用 `\n` 分隔），但**能归到某个参数名下的**那些会再出现一次，键是 schema 里的参数名：
+
+```json
+{
+  "error": "invalid_config",
+  "message": "unknown parameter(s) \"hots\" (known: ...)\nparameter \"host\" is required",
+  "fields": { "host": "parameter \"host\" is required" }
+}
+```
+
+后台表单用它把每条抱怨放到对应的输入框下面。**归不到单个字段的不会进 `fields`**——
+未知的键、或者「设了 password 但没设 username」这种两个字段一起错的情况——
+它们只留在 `message` 里。两个都发而不是只发结构化版本：`message` 是这个端点一直以来的
+形状，忽略 `fields` 的客户端什么都不损失。
+
 审计动作：`channel.create` / `channel.update`。
+
+#### `POST /admin/api/channels/{name}/test-notification` — 发一条真实通知
+
+需要 CSRF 头。请求体只有两个字段：
+
+```json
+{ "title": "测试通知", "body": "来自信使中枢的测试通知。" }
+```
+
+**202** `{"delivery_id": "...", "request_id": "..."}`。
+
+它走的是**完整投递链路**：入队 → worker → 渠道 → 尝试记录。和
+`POST /admin/api/channels/{name}/test` 的区别是根本性的：那个只回答「这个配置能不能被解析」，
+而且对六种渠道类型里的五种**连网络都不会碰**；这个回答的是「通知到底会不会到」。
+
+**它刻意不接受任何别的东西**：没有 target、没有优先级、没有定时、没有链接、没有 meta。
+后台不是第二个发送入口——它只能做运维盯着渠道列表时本来就有权做的那件事。
+
+消息会打上 `test` 标签（服务端打的，不接受客户端指定），事后能在投递列表里认出哪条是测试。
+**进审计**（`channel.test_notification`），不像连通性测试那样不进——这条真的发了东西出去。
+
+| 状态码 | 错误码 | 触发 |
+|---|---|---|
+| 404 | `not_found` | 没有这个渠道 |
+| 409 | `channel_disabled` | 渠道已禁用，投递会一直躺在队列里 |
+| 400 | `invalid_message` | 标题或正文为空 |
+| 501 | `queue_disabled` | 本部署没有投递队列 |
+| 503 | `queue_unavailable` | 入队失败 |
 
 #### `GET /admin/api/channels/{name}`
 

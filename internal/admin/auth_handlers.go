@@ -37,7 +37,7 @@ func (h *handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	actor, ok := h.authenticate(r.Context(), req.Username, req.Password)
+	actor, _, ok := h.authenticate(r.Context(), req.Username, req.Password)
 	if !ok {
 		h.limiter.fail(key)
 		h.log.Warn("admin: failed sign-in",
@@ -100,12 +100,26 @@ func (h *handler) login(w http.ResponseWriter, r *http.Request) {
 //
 // The actor returned is the username of whichever source matched, so a session
 // carries the name the account actually has rather than the configured one.
-func (h *handler) authenticate(ctx context.Context, username, password string) (string, bool) {
+//
+// The source comes back too, and the password change needs it: an account named
+// in the configuration file has no password in this database, so "change my
+// password" against one has to be refused rather than reported as done. The two
+// can share a username, so the name alone cannot answer it.
+func (h *handler) authenticate(ctx context.Context, username, password string) (string, credentialSource, bool) {
 	if h.verifyConfigured(username, password) {
-		return h.deps.Config.Username, true
+		return h.deps.Config.Username, fromConfig, true
 	}
-	return h.verifyStored(ctx, username, password)
+	actor, ok := h.verifyStored(ctx, username, password)
+	return actor, fromStore, ok
 }
+
+// credentialSource is where an authenticated account came from.
+type credentialSource int
+
+const (
+	fromConfig credentialSource = iota
+	fromStore
+)
 
 // logout ends the session.
 func (h *handler) logout(w http.ResponseWriter, r *http.Request) {

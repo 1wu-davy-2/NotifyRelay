@@ -36,7 +36,7 @@ func ValidateParams(channelType string, specs []ParamSpec, cfg map[string]any) e
 		value, present := cfg[spec.Name]
 		if !present || value == nil {
 			if spec.Required {
-				errs = append(errs, fmt.Errorf("parameter %q is required", spec.Name))
+				errs = append(errs, fieldErr(spec.Name, "parameter %q is required", spec.Name))
 			}
 			continue
 		}
@@ -64,7 +64,7 @@ func checkValue(spec ParamSpec, value any) error {
 			n = int(v)
 		case float64:
 			if v != float64(int(v)) {
-				return fmt.Errorf("parameter %q: expected a whole number, got %v", spec.Name, v)
+				return fieldErr(spec.Name, "parameter %q: expected a whole number, got %v", spec.Name, v)
 			}
 			n = int(v)
 		default:
@@ -89,7 +89,7 @@ func checkValue(spec ParamSpec, value any) error {
 				return nil
 			}
 		}
-		return fmt.Errorf("parameter %q: %q is not one of %s", spec.Name, s, quoteJoin(spec.Values))
+		return fieldErr(spec.Name, "parameter %q: %q is not one of %s", spec.Name, s, quoteJoin(spec.Values))
 
 	case ParamDuration:
 		s, ok := value.(string)
@@ -98,10 +98,10 @@ func checkValue(spec ParamSpec, value any) error {
 		}
 		d, err := time.ParseDuration(s)
 		if err != nil {
-			return fmt.Errorf("parameter %q: %w", spec.Name, err)
+			return wrapFieldErr(spec.Name, err, "parameter %q: %v", spec.Name, err)
 		}
 		if d <= 0 {
-			return fmt.Errorf("parameter %q must be greater than zero, got %q", spec.Name, s)
+			return fieldErr(spec.Name, "parameter %q must be greater than zero, got %q", spec.Name, s)
 		}
 
 	case ParamFloat:
@@ -128,7 +128,7 @@ func checkValue(spec ParamSpec, value any) error {
 		case []any:
 			for i, item := range v {
 				if _, ok := item.(string); !ok {
-					return fmt.Errorf("parameter %q[%d]: expected a string, got %T", spec.Name, i, item)
+					return fieldErr(spec.Name, "parameter %q[%d]: expected a string, got %T", spec.Name, i, item)
 				}
 			}
 		default:
@@ -136,14 +136,14 @@ func checkValue(spec ParamSpec, value any) error {
 		}
 
 	default:
-		return fmt.Errorf("parameter %q: unknown declared type %q", spec.Name, spec.Type)
+		return fieldErr(spec.Name, "parameter %q: unknown declared type %q", spec.Name, spec.Type)
 	}
 
 	return nil
 }
 
 func typeMismatch(spec ParamSpec, value any, want string) error {
-	return fmt.Errorf("parameter %q: expected %s, got %T", spec.Name, want, value)
+	return fieldErr(spec.Name, "parameter %q: expected %s, got %T", spec.Name, want, value)
 }
 
 // checkRange applies the bounds the parameter declares.
@@ -153,11 +153,11 @@ func typeMismatch(spec ParamSpec, value any, want string) error {
 // source.
 func checkRange(spec ParamSpec, n float64) error {
 	if spec.Min != nil && n < *spec.Min {
-		return fmt.Errorf("parameter %q must be at least %s, got %s",
+		return fieldErr(spec.Name, "parameter %q must be at least %s, got %s",
 			spec.Name, formatBound(*spec.Min), formatBound(n))
 	}
 	if spec.Max != nil && n > *spec.Max {
-		return fmt.Errorf("parameter %q must be at most %s, got %s",
+		return fieldErr(spec.Name, "parameter %q must be at most %s, got %s",
 			spec.Name, formatBound(*spec.Max), formatBound(n))
 	}
 	return nil

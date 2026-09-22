@@ -82,7 +82,7 @@ happened:
 | | |
 |---|---|
 | **The two keys** | Generated into `keys/` in the data directory on first boot, mode 0600, read back on every boot after. |
-| **The administrator** | Nothing is pre-set. Whoever opens the UI first creates it, and that page closes permanently. |
+| **The administrator** | Nothing is pre-set. Whoever opens the UI first creates it, and that page closes permanently. They land on a four-step checklist: channel, API key, send a test notification, read the result. |
 | **API keys** | Created on the **密钥** (Keys) page. The plaintext is shown once. |
 | **Channels** | Added on the **渠道** (Channels) page. |
 

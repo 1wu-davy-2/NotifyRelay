@@ -107,6 +107,10 @@
            * to be read by a person and will be reworded. */
           err.status = res.status;
           err.code = parsed && parsed.error;
+          /* The per-field complaints, where the server had them. A refusal that
+           * names parameters can be shown under the boxes they are about
+           * instead of as one sentence at the bottom. */
+          err.fields = parsed && parsed.fields;
           throw err;
         }
         return parsed;
@@ -314,7 +318,69 @@
         encodeURIComponent(fill(t("SavedFlash"), [document.getElementById("channel-name").value]));
     }
 
+    /* placeFieldErrors moves a refusal's per-field complaints under the boxes
+     * they are about, and returns the ones it could not place.
+     *
+     * The message the server sends is written to be read in a log line: it names
+     * each parameter by its schema name and joins every problem into one
+     * sentence. The operator is looking at a box labelled "SMTP server", and
+     * that is where the complaint belongs.
+     *
+     * A complaint about a field that is not on screen is returned rather than
+     * shown. The schema renders every channel type's block into the page and
+     * hides the ones that do not apply, so a message under a hidden box is a
+     * message pointing at nothing. */
+    function placeFieldErrors(err) {
+      var scope = activeScope();
+      if (scope) {
+        Array.prototype.forEach.call(scope.querySelectorAll(".field-error"), function (note) {
+          note.remove();
+        });
+      }
+
+      var fields = (err && err.fields) || {};
+      var names = Object.keys(fields);
+      var unplaced = [];
+      if (!scope) { return names.map(function (n) { return fields[n]; }); }
+
+      var first = null;
+      names.forEach(function (name) {
+        var field = scope.querySelector('.field[data-field="' + escapeSelector(name) + '"]');
+        if (!field || field.hidden) {
+          unplaced.push(fields[name]);
+          return;
+        }
+
+        var note = document.createElement("p");
+        note.className = "field-error";
+        note.textContent = fields[name];
+        field.appendChild(note);
+
+        if (!first) { first = field.querySelector("input, select"); }
+      });
+
+      if (first) {
+        first.focus();
+        first.scrollIntoView({ block: "center" });
+      }
+      return unplaced;
+    }
+
     function failed(err, body) {
+      /* A refusal that named fields is shown under them. What could not be
+       * placed — an unknown key, or a pair that is only wrong together — is
+       * listed at the bottom, because the reason the save was refused has to
+       * appear somewhere. */
+      var unplaced = placeFieldErrors(err);
+      if (unplaced.length > 0) {
+        say(result, unplaced.join("\n"), false);
+        return;
+      }
+      if (err.fields && Object.keys(err.fields).length > 0) {
+        say(result, t("FixMarkedFields"), false);
+        return;
+      }
+
       /* A name collision is a question, not a failure. Saving would replace a
        * channel that is delivering right now, and the operator asked to create
        * a new one — so they are told what the name collides with, and asked
@@ -421,6 +487,37 @@
     cancelTestNotify.addEventListener("click", function () {
       var dialog = document.getElementById("test-notify-dialog");
       if (dialog) { dialog.close(); }
+    });
+  }
+
+  /* ------------------------------------------------------ change password */
+
+  var passwordForm = document.getElementById("password-form");
+  if (passwordForm) {
+    var passwordResult = document.getElementById("password-result");
+
+    passwordForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+
+      var next = document.getElementById("new-password").value;
+      if (next !== document.getElementById("confirm-password").value) {
+        say(passwordResult, t("PasswordsNoMatch"), false);
+        return;
+      }
+
+      request("POST", "/admin/api/password", {
+        current_password: document.getElementById("current-password").value,
+        new_password: next
+      }).then(function (res) {
+        /* The count of ended sessions comes from the server rather than being
+         * assumed. "Did that actually lock the other person out" is the question
+         * the operator is asking, and the server is the only one that knows. */
+        say(passwordResult, (res && res.message) || t("PasswordSet"), true);
+
+        document.getElementById("current-password").value = "";
+        document.getElementById("new-password").value = "";
+        document.getElementById("confirm-password").value = "";
+      }).catch(function (err) { say(passwordResult, err.message, false); });
     });
   }
 
@@ -640,7 +737,10 @@
           return body;
         });
       }).then(function () {
-        window.location.href = "/admin/channels";
+        /* The checklist, not the channel list. The channel list is a page for
+         * somebody who already knows what this service is, and the person who
+         * just created the first account does not. */
+        window.location.href = "/admin/start";
       }).catch(function (err) {
         window.alert(err.message);
       });

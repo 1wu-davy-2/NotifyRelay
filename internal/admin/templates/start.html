@@ -1,0 +1,66 @@
+{{template "head" .}}
+{{template "nav" .}}
+<main>
+  {{template "flash" .}}
+
+  <div class="page-head">
+    <h1>{{.T.TitleStart}}</h1>
+    <p class="lede">{{.T.StartIntro}}</p>
+  </div>
+
+  {{if .Steps.Done}}
+  {{/* Finished. The page stays reachable — somebody who bookmarked it should
+       not get a 404 — and says so instead of showing four ticks with nothing
+       left to do. */}}
+  <div class="empty">
+    {{template "icon-start" .}}
+    <h2>{{.T.StartDoneHead}}</h2>
+    <p>{{.T.StartDoneBody}}</p>
+    <div class="actions">
+      <a class="button primary" href="/admin/deliveries">{{.T.NavDeliveries}}</a>
+    </div>
+  </div>
+  {{else}}
+  {{/* The step numbers are the order, not the progress. A tick replaces the
+       number when the step is done, so "2" with a tick above it reads as "you
+       are here" rather than "two done". */}}
+  <ol class="steps">
+    <li class="{{if .Steps.HasChannel}}done{{end}}">
+      <span class="mark" aria-hidden="true">{{if .Steps.HasChannel}}✓{{else}}1{{end}}</span>
+      <div class="body">
+        <h2>{{.T.StartStepChannel}}</h2>
+        <p>{{.T.StartStepChannelHint}}</p>
+      </div>
+      <a class="button" href="/admin/channels">{{if .Steps.HasChannel}}{{.T.StartStepDone}}{{else}}{{.T.StartActionGo}}{{end}}</a>
+    </li>
+
+    <li class="{{if .Steps.HasKey}}done{{end}}">
+      <span class="mark" aria-hidden="true">{{if .Steps.HasKey}}✓{{else}}2{{end}}</span>
+      <div class="body">
+        <h2>{{.T.StartStepKey}}</h2>
+        <p>{{.T.StartStepKeyHint}}</p>
+      </div>
+      <a class="button" href="/admin/keys">{{if .Steps.HasKey}}{{.T.StartStepDone}}{{else}}{{.T.StartActionGo}}{{end}}</a>
+    </li>
+
+    <li class="{{if .Steps.HasDelivery}}done{{end}}">
+      <span class="mark" aria-hidden="true">{{if .Steps.HasDelivery}}✓{{else}}3{{end}}</span>
+      <div class="body">
+        <h2>{{.T.StartStepTest}}</h2>
+        <p>{{.T.StartStepTestHint}}</p>
+      </div>
+      <a class="button" href="/admin/channels">{{if .Steps.HasDelivery}}{{.T.StartStepDone}}{{else}}{{.T.StartActionGo}}{{end}}</a>
+    </li>
+
+    <li class="{{if .Steps.HasResult}}done{{end}}">
+      <span class="mark" aria-hidden="true">{{if .Steps.HasResult}}✓{{else}}4{{end}}</span>
+      <div class="body">
+        <h2>{{.T.StartStepResult}}</h2>
+        <p>{{.T.StartStepResultHint}}</p>
+      </div>
+      <a class="button" href="/admin/deliveries">{{if .Steps.HasResult}}{{.T.StartStepDone}}{{else}}{{.T.StartActionGo}}{{end}}</a>
+    </li>
+  </ol>
+  {{end}}
+</main>
+{{template "foot" .}}

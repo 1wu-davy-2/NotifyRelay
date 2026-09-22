@@ -68,7 +68,21 @@
 
   <script type="application/json" id="catalog">{{.Catalog}}</script>
 
-  {{if .Editing}}
+  {{if .EditMissing}}
+  {{/* A link to a channel that is not there.
+       It used to render an empty form headed "Edit X" whose save would create
+       X — a form that looks like an edit and is a create. Saying so, and
+       offering the create explicitly, is the difference between a stale link
+       and a silent new channel nobody meant to make. */}}
+  <div class="empty">
+    {{template "icon-channels" .}}
+    <h2>{{.T.ChannelGoneHead}}</h2>
+    <p>{{printf .T.ChannelGoneBody .Editing}}</p>
+    <div class="actions">
+      <a class="button primary" href="/admin/channels?edit=__new__">{{.T.ChannelsNew}}</a>
+    </div>
+  </div>
+  {{else if .Editing}}
   {{/* The form is a view of the list rather than a page of its own: it opens
        from a row and closes back onto the list, which is what the crumb says. */}}
   <div class="crumbs">
@@ -153,6 +167,12 @@
             <input id="f-{{.Name}}" name="{{.Name}}" type="text" value="{{.Value}}"{{if .RequiredNow}} required{{end}}>
           {{end}}
 
+          {{/* A list parameter arrives as comma-separated text and the form
+               splits it. The schema's own description does not say so, which
+               leaves the convention undocumented on the page — the operator
+               finds out by typing "a, b" and getting one address containing a
+               comma. */}}
+          {{if eq .Kind "list"}}<p class="desc">{{$.T.ChannelFormListHint}}</p>{{end}}
           {{if .Description}}<p class="desc">{{.Description}}</p>{{end}}
         </div>
         {{end}}

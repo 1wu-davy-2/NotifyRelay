@@ -43,6 +43,8 @@ var zh = Messages{
 		KeyStateEnabled:  "%s 已启用",
 		KeyStateDisabled: "%s 已禁用",
 		DiscardChanges:   "这个表单有未保存的改动，离开会丢掉它们。",
+		FixMarkedFields:  "请修正标出的字段。",
+		PasswordSet:      "密码已修改。",
 	},
 	// ------------------------------------------------------------ brand
 	AppName: "信使中枢",
@@ -54,6 +56,7 @@ var zh = Messages{
 	NavKeys:       "密钥",
 	NavAPI:        "API",
 	NavSignOut:    "退出登录",
+	NavStart:      "上手",
 	NavLangSwitch: "语言",
 
 	// ----------------------------------------------------- page titles
@@ -66,6 +69,24 @@ var zh = Messages{
 	TitleKeys:       "密钥",
 	TitleAPI:        "API 参考",
 	TitleError:      "出错了",
+	TitleStart:      "上手",
+
+	// ------------------------------------------------ the first-run checklist
+	StartIntro: "从零到一条真的送达的通知，四步。每一步都是查出来的，不是记下来的——" +
+		"所以删掉渠道之后，它不会还说这一步已完成。",
+	StartStepChannel:     "创建一个渠道",
+	StartStepChannelHint: "渠道就是通知的去向：邮件、webhook、钉钉、飞书、Slack、企微。",
+	StartStepKey:         "创建一个 API Key",
+	StartStepKeyHint:     "上游用它调用通知 API。明文只显示一次，库里只有摘要。",
+	StartStepTest:        "发一条测试通知",
+	StartStepTestHint:    "按钮在渠道那一行。它走的是完整投递链路，不是只检查配置格式。",
+	StartStepResult:      "查看投递结果",
+	StartStepResultHint: "投递详情页有完整的尝试记录。失败也是结果——" +
+		"它告诉你是哪一步不对。",
+	StartActionGo: "前往",
+	StartStepDone: "已完成",
+	StartDoneHead: "四步都完成了",
+	StartDoneBody: "通知链路已经跑通。这个入口会从左侧消失，下次直接进渠道页。",
 
 	// ---------------------------------------------------- shared copy
 	CommonSave:        "保存",
@@ -106,6 +127,17 @@ var zh = Messages{
 	SetupPasswordRule: "至少 8 位。这个账号可以改掉整个系统里所有通知的去向，所以只卡长度——" +
 		"一句口令比一个带符号的短密码更结实。",
 
+	// ------------------------------------------------------- change password
+	NavPassword:     "修改密码",
+	TitlePassword:   "修改密码",
+	PasswordIntro:   "改掉这个后台账号的密码。",
+	PasswordCurrent: "当前密码",
+	PasswordNew:     "新密码",
+	PasswordConfirm: "确认新密码",
+	PasswordSubmit:  "修改密码",
+	PasswordRule:    "至少 8 位。",
+	PasswordChanged: "密码已修改，另外 %d 个会话已被登出。",
+
 	// ------------------------------------------- error page back links
 	BackToChannels:   "返回渠道",
 	BackToDeliveries: "返回投递",
@@ -140,8 +172,12 @@ var zh = Messages{
 	ChannelFormQuotaHead:   "配额",
 	ChannelFormQuotaDesc:   "0 表示不限。取不到配额的投递会退回队列，而不是直接失败。",
 	ChannelFormTestConn:    "测试连通性",
-	TestNotifyButton:       "发送测试通知",
-	TestNotifyHeading:      "发送测试通知",
+	ChannelFormListHint:    "多个值用逗号分隔。",
+	ChannelGoneHead:        "这个渠道不存在",
+	ChannelGoneBody: "名为 %s 的渠道已经被删除，或者从来没有存在过。" +
+		"保存这个表单会新建它——如果你要的是新建，请用「新建渠道」。",
+	TestNotifyButton:  "发送测试通知",
+	TestNotifyHeading: "发送测试通知",
 	TestNotifyIntro: "发一条真实的通知，走完整的投递链路：入队 → worker → 渠道 → 尝试记录。" +
 		"这是唯一能证明「通知真的会到」的操作——「测试连通性」只能证明配置能被解析，" +
 		"而且对其中五种渠道类型它连网络都不会碰。",
@@ -331,6 +367,8 @@ var zh = Messages{
 	ErrBadCredentials:        "用户名或密码不正确",
 	ErrSignInFirst:           "请先登录",
 	ErrSessionExpired:        "会话已过期",
+	ErrPasswordInConfig:      "这个账号的密码写在配置文件里，不在这里改。改掉配置里的 admin.password_hash 并重启。",
+	ErrPasswordChangeFailed:  "密码修改失败",
 	ErrMissingCSRF:           "变更类请求必须带 %s 头",
 }
 
@@ -373,6 +411,8 @@ var en = Messages{
 		KeyStateEnabled:  "%s is enabled",
 		KeyStateDisabled: "%s is disabled",
 		DiscardChanges:   "This form has unsaved changes. Leaving discards them.",
+		FixMarkedFields:  "Correct the marked fields.",
+		PasswordSet:      "The password was changed.",
 	},
 	// ------------------------------------------------------------ brand
 	AppName: "NotifyRelay",
@@ -384,6 +424,7 @@ var en = Messages{
 	NavKeys:       "Keys",
 	NavAPI:        "API",
 	NavSignOut:    "Sign out",
+	NavStart:      "Get started",
 	NavLangSwitch: "Language",
 
 	// ----------------------------------------------------- page titles
@@ -396,6 +437,24 @@ var en = Messages{
 	TitleKeys:       "Keys",
 	TitleAPI:        "API reference",
 	TitleError:      "Something went wrong",
+	TitleStart:      "Get started",
+
+	// ------------------------------------------------ the first-run checklist
+	StartIntro: "Four steps from nothing to a notification that has actually arrived. Each " +
+		"one is looked up rather than remembered, so the page cannot still claim a step is " +
+		"done after you delete the thing that finished it.",
+	StartStepChannel:     "Create a channel",
+	StartStepChannelHint: "A channel is where notifications go: mail, a webhook, DingTalk, Feishu, Slack, WeCom.",
+	StartStepKey:         "Create an API key",
+	StartStepKeyHint:     "Producers authenticate with it. The plaintext is shown once; only its digest is stored.",
+	StartStepTest:        "Send a test notification",
+	StartStepTestHint:    "The button is on the channel's row. It goes through the whole delivery path — it does not just check that the configuration parses.",
+	StartStepResult:      "Look at the result",
+	StartStepResultHint:  "The delivery page has the full attempt history. A failure is a result too — it says which part is wrong.",
+	StartActionGo:        "Go",
+	StartStepDone:        "Done",
+	StartDoneHead:        "All four are done",
+	StartDoneBody:        "The notification path works end to end. This entry disappears from the sidebar.",
 
 	// ---------------------------------------------------- shared copy
 	CommonSave:        "Save",
@@ -438,6 +497,17 @@ var en = Messages{
 		"notification in the estate is delivered, so length is the only rule — " +
 		"a passphrase beats a short password with symbols in it.",
 
+	// ------------------------------------------------------- change password
+	NavPassword:     "Change password",
+	TitlePassword:   "Change password",
+	PasswordIntro:   "Change the password for this operator account.",
+	PasswordCurrent: "Current password",
+	PasswordNew:     "New password",
+	PasswordConfirm: "Confirm new password",
+	PasswordSubmit:  "Change password",
+	PasswordRule:    "At least 8 characters.",
+	PasswordChanged: "The password was changed, and %d other sessions were signed out.",
+
 	// ------------------------------------------- error page back links
 	BackToChannels:   "Back to channels",
 	BackToDeliveries: "Back to deliveries",
@@ -473,8 +543,12 @@ var en = Messages{
 	ChannelFormQuotaDesc: "Zero means unlimited. A delivery that cannot get a slot " +
 		"goes back to the queue rather than failing.",
 	ChannelFormTestConn: "Test connectivity",
-	TestNotifyButton:    "Send a test notification",
-	TestNotifyHeading:   "Send a test notification",
+	ChannelFormListHint: "Separate multiple values with commas.",
+	ChannelGoneHead:     "That channel is not there",
+	ChannelGoneBody: "A channel named %s has been deleted, or never existed. " +
+		"Saving this form would create it — if that is what you want, use New channel.",
+	TestNotifyButton:  "Send a test notification",
+	TestNotifyHeading: "Send a test notification",
 	TestNotifyIntro: "Sends a real notification through the whole delivery path: queue, worker, " +
 		"channel, attempt history. This is the only thing that shows a notification actually " +
 		"arrives — \"test connectivity\" only shows the configuration parses, and for five of " +
@@ -658,30 +732,32 @@ var en = Messages{
 	ErrNotReplayableStatus:   "only a dead-lettered delivery can be replayed; this one is %s",
 	ErrBodyExpired: "the message body is no longer on disk, so there is nothing to send; " +
 		"it was removed by the retention policy",
-	ErrReplayFailed:        "the delivery could not be replayed",
-	ErrNotReplayable:       "the delivery is no longer in a state that can be replayed",
-	ErrStatsUnreadable:     "the queue statistics could not be read",
-	ErrKeysUnreadable:      "the API keys could not be read",
-	ErrNoKeyStore:          "this deployment has no store for API keys",
-	ErrKeyNameRequired:     "a name is required",
-	ErrKeyCreateFailed:     "the key could not be created",
-	ErrKeyEnabledRequired:  "enabled is required",
-	ErrKeyUnreadable:       "the key could not be read",
-	ErrKeyNotFound:         "no key with that id",
-	ErrKeyUpdateFailed:     "the key could not be updated",
-	ErrKeyDeleteFailed:     "the key could not be deleted",
-	ErrTokenOnce:           "this is the only time the token is shown; it is not recoverable",
-	ErrAdminUnreadable:     "the administrator account could not be read",
-	ErrTooManyAttempts:     "too many attempts; try again later",
-	ErrUsernameRequired:    "a username is required",
-	ErrPasswordTooShort:    "the password must be at least %d characters",
-	ErrNoCredentialStore:   "this deployment has no store for an administrator account",
-	ErrAccountCreateFailed: "the account could not be created",
-	ErrAlreadyConfigured:   "an administrator already exists for this deployment",
-	ErrSessionCreateFailed: "the session could not be created",
-	ErrTooManySignIns:      "too many failed sign-in attempts; try again later",
-	ErrBadCredentials:      "the username or password is not correct",
-	ErrSignInFirst:         "sign in first",
-	ErrSessionExpired:      "the session has expired",
-	ErrMissingCSRF:         "state-changing requests must carry the %s header",
+	ErrReplayFailed:         "the delivery could not be replayed",
+	ErrNotReplayable:        "the delivery is no longer in a state that can be replayed",
+	ErrStatsUnreadable:      "the queue statistics could not be read",
+	ErrKeysUnreadable:       "the API keys could not be read",
+	ErrNoKeyStore:           "this deployment has no store for API keys",
+	ErrKeyNameRequired:      "a name is required",
+	ErrKeyCreateFailed:      "the key could not be created",
+	ErrKeyEnabledRequired:   "enabled is required",
+	ErrKeyUnreadable:        "the key could not be read",
+	ErrKeyNotFound:          "no key with that id",
+	ErrKeyUpdateFailed:      "the key could not be updated",
+	ErrKeyDeleteFailed:      "the key could not be deleted",
+	ErrTokenOnce:            "this is the only time the token is shown; it is not recoverable",
+	ErrAdminUnreadable:      "the administrator account could not be read",
+	ErrTooManyAttempts:      "too many attempts; try again later",
+	ErrUsernameRequired:     "a username is required",
+	ErrPasswordTooShort:     "the password must be at least %d characters",
+	ErrNoCredentialStore:    "this deployment has no store for an administrator account",
+	ErrAccountCreateFailed:  "the account could not be created",
+	ErrAlreadyConfigured:    "an administrator already exists for this deployment",
+	ErrSessionCreateFailed:  "the session could not be created",
+	ErrTooManySignIns:       "too many failed sign-in attempts; try again later",
+	ErrBadCredentials:       "the username or password is not correct",
+	ErrSignInFirst:          "sign in first",
+	ErrSessionExpired:       "the session has expired",
+	ErrPasswordInConfig:     "this account's password comes from the configuration file. Change admin.password_hash there and restart.",
+	ErrPasswordChangeFailed: "the password could not be changed",
+	ErrMissingCSRF:          "state-changing requests must carry the %s header",
 }

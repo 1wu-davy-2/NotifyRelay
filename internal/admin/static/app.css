@@ -148,7 +148,10 @@ main.wide { max-width: 1500px; }
   font-size: 12.5px;
 }
 .side-foot .actor { color: var(--ink-dim); padding: 0 var(--s2); }
-.side-foot button.link { align-self: flex-start; padding: 0 var(--s2); }
+.side-foot a, .side-foot button.link {
+  align-self: flex-start; padding: 0 var(--s2); font-size: 12.5px;
+}
+.side-foot a.on { color: var(--ink); font-weight: 600; }
 
 /* -------------------------------------------------------- language switch */
 
@@ -276,6 +279,16 @@ tbody tr:last-child td { border-bottom: none; }
 .field .req { color: var(--bad); }
 .desc { color: var(--ink-faint); font-size: 12.5px; margin: var(--s1) 0 0; }
 
+/* A complaint about one field, under that field.
+   The control is marked too, so the message is not the only thing saying which
+   box is wrong — a red outline is visible from across the form. */
+.field-error {
+  color: var(--bad); font-size: 12.5px;
+  margin: var(--s1) 0 0; white-space: pre-wrap;
+}
+.field:has(.field-error) input,
+.field:has(.field-error) select { border-color: var(--bad); }
+
 /* ---------------------------------------------------------------- toolbar */
 
 .toolbar {
@@ -303,6 +316,37 @@ tbody tr:last-child td { border-bottom: none; }
 .stat.warn .n { color: var(--warn); }
 .stat.bad .n { color: var(--bad); }
 .stat.ok .n { color: var(--ok); }
+
+/* ------------------------------------------------------------------ steps */
+
+/* The first-run checklist. An ordered list because the order is the point —
+   step 4 does not work until step 1 does — and the marker carries the number
+   until the step is done, when it becomes a tick. */
+.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s3); }
+.steps li {
+  display: flex; align-items: center; gap: var(--s4);
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: var(--s4);
+}
+.steps li.done { border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
+.steps .mark {
+  flex: none; width: 28px; height: 28px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line-strong); color: var(--ink-dim);
+  font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.steps li.done .mark { border-color: var(--ok); color: var(--ok); }
+.steps .body { flex: 1; min-width: 0; }
+.steps h2 { margin: 0 0 var(--s1); font-size: 14px; }
+.steps p { margin: 0; color: var(--ink-dim); font-size: 13px; max-width: 68ch; }
+.steps li.done h2 { color: var(--ink-dim); }
+
+/* The count beside a nav item — how many steps are left. */
+.pill {
+  margin-left: auto; min-width: 18px; padding: 0 5px;
+  border-radius: 9px; background: var(--accent); color: var(--accent-ink);
+  font-size: 11px; font-weight: 700; text-align: center; line-height: 18px;
+}
 
 /* ------------------------------------------------------------ empty state */
 

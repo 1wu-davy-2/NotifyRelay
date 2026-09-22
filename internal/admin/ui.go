@@ -296,6 +296,14 @@ type pageData struct {
 	// selects it and returns to this page.
 	LangSwitch []langOption
 
+	// Steps is the first-run checklist's state.
+	//
+	// Computed for every page because the navigation offers the checklist only
+	// while something is left to do, and a link that is always there is a link
+	// nobody clicks twice. It is empty on the pages rendered without a session,
+	// where there is nothing to check.
+	Steps Onboarding
+
 	// Flash is a message from the previous action, carried in the query string
 	// rather than in a session: a redirect after a form post should say what
 	// happened, and a one-shot query parameter is the smallest thing that does.
@@ -428,6 +436,14 @@ func (h *handler) channelsPage(w http.ResponseWriter, r *http.Request, actor str
 		editEnabled = true
 		editQuota   config.QuotaConfig
 		editSecrets = map[string]bool{}
+		// editMissing marks a link to a channel that is not there any more.
+		//
+		// The form used to be rendered anyway: the lookup returned nil, the
+		// per-type block kept its blank values, and the page showed an empty
+		// form headed "Edit X" whose save would create X. An operator following
+		// a stale link got a form that looked like an edit and was a create,
+		// which is the kind of thing you find out about afterwards.
+		editMissing bool
 	)
 	if editing != "" && editing != newChannel {
 		cfg, err := h.deps.Channels.Get(ctx, editing)
@@ -435,7 +451,9 @@ func (h *handler) channelsPage(w http.ResponseWriter, r *http.Request, actor str
 			h.renderError(w, r, actor, "channels", copyFor(r).ErrChannelUnreadable, err)
 			return
 		}
-		if cfg != nil {
+		if cfg == nil {
+			editMissing = true
+		} else {
 			_, set := config.MaskSecrets(cfg.Type, cfg.Config)
 			for _, name := range set {
 				editSecrets[name] = true
@@ -472,6 +490,7 @@ func (h *handler) channelsPage(w http.ResponseWriter, r *http.Request, actor str
 		Channels    []channelView
 		Forms       []typeForm
 		Editing     string
+		EditMissing bool
 		EditType    string
 		EditEnabled bool
 		EditQuota   config.QuotaConfig
@@ -482,6 +501,7 @@ func (h *handler) channelsPage(w http.ResponseWriter, r *http.Request, actor str
 		Channels:    views,
 		Forms:       forms,
 		Editing:     editing,
+		EditMissing: editMissing,
 		EditType:    editType,
 		EditEnabled: editEnabled,
 		EditQuota:   editQuota,
@@ -643,7 +663,7 @@ func (h *handler) pageBase(r *http.Request, actor, nav string) pageData {
 	lang := langFrom(r.Context())
 	t := copyFor(r)
 
-	return pageData{
+	data := pageData{
 		Title:      titleFor(t, nav),
 		Actor:      actor,
 		Nav:        nav,
@@ -654,6 +674,15 @@ func (h *handler) pageBase(r *http.Request, actor, nav string) pageData {
 		Flash:      r.URL.Query().Get("ok"),
 		Error:      r.URL.Query().Get("err"),
 	}
+
+	// Only where there is a session. The sign-in and first-run pages have
+	// nothing to check, and asking the stores on the way to a page that shows
+	// no navigation at all would be three reads for a link that is not drawn.
+	if actor != "" {
+		data.Steps = h.onboarding(r)
+	}
+
+	return data
 }
 
 // titleFor is a page's title from the copy table.
@@ -673,6 +702,10 @@ func titleFor(t *i18n.Messages, nav string) string {
 		return t.TitleKeys
 	case "api-docs":
 		return t.TitleAPI
+	case "start":
+		return t.TitleStart
+	case "password":
+		return t.TitlePassword
 	case "login":
 		return t.TitleSignIn
 	case "setup":
