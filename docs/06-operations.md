@@ -189,26 +189,30 @@ systemctl reload notifyrelay     # 发 SIGHUP
    如果 secret 是通过 `!env` 注入的，确认环境变量里没有多余的空格或换行
    （`echo $SECRET | ...` 写进 `.env` 时会带上换行）。
 
-### 8.2 Docker 镜像：由 CI 验证
+### 8.2 Docker 镜像：✅ 已由 CI 验证
 
-**触发条件：`.github/workflows/docker.yml` 在 main 上跑通后，本条撤销。**
+`.github/workflows/docker.yml` 在 main 上跑通（2026-09-22，commit `80460f3`）。
+它构建镜像、断言 `--healthcheck` 对不可达地址返回非 0、启动容器并断言日志里
+出现 `listening`。
 
-该 workflow 做三件事：构建镜像、断言 `--healthcheck` 对不可达地址返回非 0、
-启动容器并断言日志里出现 `listening`。它还顺带覆盖了镜像里最容易错的一处——
-服务以 nonroot 运行而数据目录归 root 所有，容器会在启动时因权限失败。
+**这条曾经不是"没试过"而是"试了会失败"**：镜像里的数据目录归 root 所有而服务以
+nonroot 运行，容器会在启动时因权限失败。distroless 没有 shell，没法用 `RUN chown`
+修，得在构建阶段建好目录再 `COPY --chown` 进来。CI 跑通说明这处修对了。
 
-在那之前，本地验证过的只有构建命令本身：`CGO_ENABLED=0 GOOS=linux GOARCH=amd64`
-产出的确实是 `ELF 64-bit LSB executable, x86-64, statically linked, stripped`。
-镜像组装、基础镜像、非 root 下的文件权限都没实跑过。
+本地仍然只验证过构建命令本身（`CGO_ENABLED=0 GOOS=linux GOARCH=amd64` 产出
+`ELF 64-bit LSB executable, x86-64, statically linked, stripped`）——
+但镜像组装、基础镜像、文件权限现在有了真实证据。
 
-### 8.3 Helm chart：由 CI 验证（部分）
+### 8.3 Helm chart：渲染 ✅ 已由 CI 验证 / 安装仍待验证
 
-**触发条件：`.github/workflows/helm.yml` 在 main 上跑通后，"渲染"部分撤销。**
+`.github/workflows/helm.yml` 在 main 上跑通（2026-09-22，commit `80460f3`）：
+`helm lint` 通过，`helm template` 渲染出 Deployment / Service / ConfigMap，
+replicas 固定在 1，ConfigMap 里的配置能被解析。
 
-`helm lint` 加 `helm template` 能证明模板引用的值都存在、资源都渲染得出来、
-ConfigMap 里的配置能解析。**它证明不了 chart 能在集群里装起来**——
-那需要 `helm install` 和一个真实集群。所以这一条只撤销一半：
-"渲染正确"由 CI 保证，"安装成功"仍然待验证。
+**它证明不了 chart 能在集群里装起来**——那需要 `helm install` 和一个真实集群。
+所以这一条只撤销一半："渲染正确"有证据，"安装成功"仍然没有。
+
+**触发条件**：首次在真实集群上 `helm install` 时。
 
 ### 8.4 systemd unit：未在 systemd 上运行过
 
@@ -224,6 +228,9 @@ Windows 没有 SIGHUP。重载逻辑本身有测试覆盖（注入信号通道�
 
 **触发条件**：首次在 Linux 上用 `systemctl reload` 或 `kill -HUP` 时。
 验法是改一下 `retry.max_attempts`，reload，发一条必然失败的异步投递，数尝试次数。
+
+> 注意：容器镜像里 `--healthcheck` 已经在 CI 里跑过了，但**信号投递没有**——
+> 两者是不同的东西，`--healthcheck` 是子命令，SIGHUP 是进程信号。
 
 ### 8.6 M5 验收 #10：15 分钟真人验证
 

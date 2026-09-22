@@ -856,13 +856,28 @@ systemd unit 里关键指令在不在、Dockerfile 的探针有没有用 shell �
 这些检查**刻意是浅的**——它们证明不了镜像能构建、chart 能安装，
 只有 Docker 和 Helm 能证明，而本机两个都没有。
 
+#### CI（2026-09-22）
+
+两个 workflow 在 main 上跑通（commit `80460f3`），README 带 badge：
+
+| workflow | 做什么 | 结果 |
+|---|---|---|
+| `docker.yml` | 构建镜像；断言 `--healthcheck` 对不可达地址非 0；启动容器并断言日志有 `listening` | ✅ success |
+| `helm.yml` | `helm lint`；`helm template`；断言 Deployment/Service/ConfigMap 都在、replicas 固定为 1、ConfigMap 里的配置能解析 | ✅ success |
+
+**CI 立刻抓到一个本地检查抓不到的缺陷**：镜像里数据目录归 root 所有而服务以
+nonroot 运行——**容器会在启动时因权限失败**。distroless 没有 shell，没法用
+`RUN chown` 修，得在构建阶段建目录再 `COPY --chown` 进来。
+我上一轮加的 `WORKDIR /app` 不够：Docker 创建 WORKDIR 时 `USER` 还没生效，
+目录仍然归 root。
+
+顺带补了一条 **`http listening` 启动日志**——服务原本从不记录自己开始监听 HTTP，
+健康进程和监听失败的进程在日志里长得一模一样，而"容器没响应时第一件事就是看日志"。
+
 #### 仍未验证（已写进 `06-operations.md` §8）
 
-- **Docker 镜像从未构建过**（本机无 Docker）。构建命令本身验证过：
-  `CGO_ENABLED=0 GOOS=linux GOARCH=amd64` 产出的确实是
-  `ELF 64-bit LSB executable, x86-64, statically linked, stripped`——
-  distroless 的前提成立。未验证的是镜像组装、基础镜像、非 root 下的文件权限。
-- **Helm chart 从未 `helm install` 过**（本机无 helm）。
+- ~~Docker 镜像从未构建过~~ → **已由 CI 验证**（见上）。
+- **Helm chart 的"渲染"已由 CI 验证，`helm install` 仍未做过**（需要真实集群）。
 - **systemd unit 从未在 systemd 上跑过**。
 - **钉钉/飞书加签未对真实平台验证**（M3 起就挂着）。
 - **SIGHUP 的信号投递在 Windows 上无法验证**。重载逻辑有测试覆盖，
