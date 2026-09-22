@@ -1,3 +1,9 @@
+# docker compose up -d
+#
+# Copy configs/notifyrelay.example.yaml to configs/notifyrelay.yaml, edit it,
+# and put the secrets it references in a .env file next to this one. Compose
+# reads .env automatically.
+
 services:
   notifyrelay:
     build:
@@ -9,17 +15,51 @@ services:
     restart: unless-stopped
 
     ports:
-      - "8080:8080" # HTTP API
+      - "8080:8080" # HTTP API, the operator UI, /metrics
       - "2525:2525" # SMTP inbound
 
     environment:
-      # Secrets are injected here, never written into the config file.
-      # An unset variable is fine while no channel references it; once the M1
-      # email channel is configured with `!env SMTP_PASSWORD`, a missing value
-      # makes the service refuse to start — by design.
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      # Passed through from the host environment or from .env, and *only* if
+      # set there.
+      #
+      # The list form matters. Writing `SMTP_PASSWORD: ${SMTP_PASSWORD:-}`
+      # would define the variable as an empty string even when nobody set it,
+      # and the configuration loader treats "set but empty" as a real value —
+      # so a deployment that meant to have no password would start with one,
+      # which is the opposite of what `!env` is for. A variable that is not set
+      # here is not set in the container, and a `!env` that references it fails
+      # startup loudly.
+      - SMTP_PASSWORD
+      - NOTIFYRELAY_SECRET_KEY
+      - NOTIFYRELAY_SESSION_KEY
+      - WECOM_CORP_SECRET
+      - DINGTALK_SECRET
+      - FEISHU_SECRET
+      - SLACK_TOKEN
+      - WEBHOOK_SECRET
 
     volumes:
-      # Copy configs/notifyrelay.example.yaml to configs/notifyrelay.yaml and
-      # edit it for real use.
-      - ./configs/notifyrelay.example.yaml:/etc/notifyrelay/config.yaml:ro
+      # The configuration seeds the database on first boot and is not read
+      # again after that; channels are managed through the operator UI.
+      - ./configs/notifyrelay.yaml:/etc/notifyrelay/config.yaml:ro
+      # The database and the spooled message bodies. This is the volume that
+      # has to be backed up.
+      - notifyrelay-data:/app/data
+
+    # The image has no shell, so the healthcheck is the binary probing itself.
+    # The Dockerfile declares one; this repeats it so a deployment that builds
+    # the image elsewhere gets the same behaviour.
+    healthcheck:
+      test: ["CMD", "/notifyrelay", "--healthcheck", "127.0.0.1:8080"]
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+
+    # Give the queue a chance to finish what it is holding. The service drains
+    # in-flight deliveries on SIGTERM before it exits; killing it sooner leaves
+    # those to the orphan sweep, which works but delivers later.
+    stop_grace_period: 30s
+
+volumes:
+  notifyrelay-data:

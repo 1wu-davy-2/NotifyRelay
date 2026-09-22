@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"notifyrelay/internal/channel"
@@ -103,19 +104,55 @@ func (o *Options) applyDefaults() {
 type Worker struct {
 	opts Options
 
+	// policy is swapped by SetPolicy. The retry cadence is the setting an
+	// operator is most likely to change while the service is running — a
+	// deployment that is retrying too slowly during an incident is exactly
+	// when somebody edits the configuration — and reading it through a pointer
+	// is what makes that take effect on the next attempt rather than the next
+	// restart.
+	policy atomic.Pointer[Policy]
+
 	wake chan struct{}
 	once sync.Once
+}
+
+// SetPolicy replaces the retry cadence.
+//
+// A delivery already being retried picks the new policy up on its next
+// decision. Nothing in flight is interrupted: the delivery keeps the attempt
+// count it has, and the new policy governs what happens next.
+func (w *Worker) SetPolicy(p Policy) {
+	normalized := p.Normalize()
+	w.policy.Store(&normalized)
+}
+
+// Policy returns the live retry cadence.
+//
+// Exported so that the reload path can be checked from outside this package:
+// "the setting was applied" is otherwise only observable by waiting for a
+// retry to happen.
+func (w *Worker) Policy() Policy { return w.currentPolicy() }
+
+// currentPolicy returns the live retry cadence.
+func (w *Worker) currentPolicy() Policy {
+	if p := w.policy.Load(); p != nil {
+		return *p
+	}
+	return DefaultPolicy()
 }
 
 // New builds a worker.
 func New(opts Options) *Worker {
 	opts.applyDefaults()
-	return &Worker{
+
+	w := &Worker{
 		opts: opts,
 		// Capacity one: a nudge that arrives while workers are busy must not
 		// block the caller, and a second nudge adds nothing.
 		wake: make(chan struct{}, 1),
 	}
+	w.SetPolicy(opts.Policy)
+	return w
 }
 
 // Wake asks the workers to look at the queue now rather than at the next poll.
@@ -331,7 +368,7 @@ func (w *Worker) process(ctx context.Context, d *store.Delivery) {
 // behave identically because the message has not had its chance either way, and
 // the attempt budget is there to bound real attempts.
 func (w *Worker) releaseNoCapacity(ctx context.Context, d *store.Delivery, attempt *store.Attempt, res router.TargetResult) {
-	if reason := w.opts.Policy.ExhaustedReason(d.Attempts, time.Since(d.CreatedAt)); reason != "" {
+	if reason := w.currentPolicy().ExhaustedReason(d.Attempts, time.Since(d.CreatedAt)); reason != "" {
 		w.deadLetter(ctx, d, attempt, reason)
 		return
 	}
@@ -344,12 +381,14 @@ func (w *Worker) releaseNoCapacity(ctx context.Context, d *store.Delivery, attem
 func (w *Worker) retryOrGiveUp(ctx context.Context, d *store.Delivery, attempt *store.Attempt, reason string) {
 	age := time.Since(d.CreatedAt)
 
-	if giveUp := w.opts.Policy.ExhaustedReason(d.Attempts+1, age); giveUp != "" {
+	policy := w.currentPolicy()
+
+	if giveUp := policy.ExhaustedReason(d.Attempts+1, age); giveUp != "" {
 		w.deadLetter(ctx, d, attempt, giveUp)
 		return
 	}
 
-	next, ok := w.opts.Policy.Retry(d.Attempts+1, age, time.Now().UTC())
+	next, ok := policy.Retry(d.Attempts+1, age, time.Now().UTC())
 	if !ok {
 		w.deadLetter(ctx, d, attempt, "attempts exhausted")
 		return

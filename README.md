@@ -273,6 +273,29 @@ per_second/minute/hour 用滑动窗口；per_day/month 用固定窗口并落库�
 两者分开是有意的：存活探针因依赖故障而失败会导致进程被反复重启——既修不好问题，还会丢掉内存状态；
 就绪探针查依赖，是为了不在存不下的时候还接受通知。
 
+### 部署
+
+```bash
+# Docker Compose：一条命令
+cp .env.example .env          # 填密钥；.env 在 .gitignore 里
+cp configs/notifyrelay.example.yaml configs/notifyrelay.yaml
+docker compose up -d
+
+# Kubernetes
+helm install notifyrelay deploy/helm/notifyrelay   --set image.repository=<你的仓库>/notifyrelay --set image.tag=<版本>
+
+# 裸机 / 虚拟机
+install -m 0755 notifyrelay /usr/local/bin/
+install -m 0644 deploy/systemd/notifyrelay.service /etc/systemd/system/
+systemctl enable --now notifyrelay
+```
+
+**不重启改配置**：`systemctl reload notifyrelay`（或 `kill -HUP`）。日志级别、API 密钥、
+超时、重试节奏、熔断阈值、渠道配置都会生效；监听地址、存储路径、worker 数量需要重启，
+**服务会在日志里列出来是哪些**。
+
+运维手册（备份、升级、指标、排障、还没验证的部分）见 [`docs/06-operations.md`](docs/06-operations.md)。
+
 ### 配置
 
 见 [`configs/notifyrelay.example.yaml`](configs/notifyrelay.example.yaml)，每一项都有注释。三条硬规则：
@@ -570,6 +593,33 @@ relational-shaped but not SQL-shaped: a claim reads and marks in one step,
 which SQLite does with an immediate transaction and MySQL does with
 `SELECT ... FOR UPDATE SKIP LOCKED`. Nothing above that package knows which
 engine is underneath — only the switch in `openStore()` does.
+
+### Deployment
+
+```bash
+# Docker Compose, one command
+cp .env.example .env          # fill in the secrets; .env is gitignored
+cp configs/notifyrelay.example.yaml configs/notifyrelay.yaml
+docker compose up -d
+
+# Kubernetes
+helm install notifyrelay deploy/helm/notifyrelay   --set image.repository=<your-registry>/notifyrelay --set image.tag=<version>
+
+# Bare metal
+install -m 0755 notifyrelay /usr/local/bin/
+install -m 0644 deploy/systemd/notifyrelay.service /etc/systemd/system/
+systemctl enable --now notifyrelay
+```
+
+**Reload without a restart**: `systemctl reload notifyrelay` (or `kill -HUP`). Log
+level, API keys, timeouts, the retry cadence, breaker thresholds and the channel
+configuration all take effect; the listen address, storage paths and worker count
+need a restart, and **the service names them in its log** rather than leaving you
+to guess which half of your edit landed.
+
+The operations manual — backup, upgrade, metrics, troubleshooting, and an honest
+list of what has not been verified — is [`docs/06-operations.md`](docs/06-operations.md)
+(Chinese).
 
 ### Acknowledgements
 

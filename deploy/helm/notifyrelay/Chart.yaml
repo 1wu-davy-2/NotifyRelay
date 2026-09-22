@@ -1,0 +1,19 @@
+apiVersion: v2
+name: notifyrelay
+description: |
+  A unified notification relay: one integration upstream (HTTP API / SMTP),
+  many channels downstream.
+type: application
+version: 0.1.0
+appVersion: "dev"
+home: https://github.com/1wu-davy-2/NotifyRelay
+sources:
+  - https://github.com/1wu-davy-2/NotifyRelay
+annotations:
+  # The relay keeps a durable queue in SQLite on a single volume. More than one
+  # replica would have each pod claiming from its own copy of the database,
+  # which is not replication — it is two relays with two queues.
+  #
+  # This is a note for whoever reads the chart, not a constraint Helm enforces:
+  # the Deployment below sets a hardcoded replicas: 1.
+  notifyrelay.io/single-replica: "true"

@@ -56,6 +56,7 @@ func run() error {
 	hashKey := flag.String("hash-key", "", "print the config representation of an API key's digest and exit")
 	genKey := flag.Bool("gen-key", false, "print a new secret_key and exit")
 	hashPassword := flag.String("hash-password", "", "print an admin password_hash and exit")
+	healthcheck := flag.String("healthcheck", "", "probe a running instance's HTTP address and exit 0 or 1")
 	sealValue := flag.String("seal-value", "", "seal a value with secret_key from the configuration file and exit")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
@@ -89,6 +90,10 @@ func run() error {
 		return nil
 	}
 
+	if *healthcheck != "" {
+		return runHealthcheck(*healthcheck)
+	}
+
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		return err
@@ -110,7 +115,7 @@ func run() error {
 		return nil
 	}
 
-	log := newLogger(cfg.Log)
+	log, levelVar := newLogger(cfg.Log)
 
 	// Fail fast when a channel type this binary does not have is configured,
 	// rather than silently skipping the instance and dropping notifications.
@@ -224,12 +229,15 @@ func run() error {
 		Log:        log,
 	})
 
+	// The settings that can change while the service runs. Everything else is
+	// fixed at startup; see reloader for which is which and why.
+	live := api.NewLive(keys, cfg.Timeouts.Handler.Std())
+
 	handler := api.NewHandler(api.Deps{
 		Admin:          adminHandler,
-		Keys:           keys,
+		Live:           live,
 		Log:            log,
 		Router:         rtr,
-		HandlerTimeout: cfg.Timeouts.Handler.Std(),
 		Queue:          worker,
 		Store:          persistence,
 		Ready:          persistence,
@@ -253,6 +261,25 @@ func run() error {
 	if len(rtr.Instances()) == 0 {
 		log.Warn("no channel instances configured; every delivery will fail until channels are added")
 	}
+
+	// SIGHUP re-reads the configuration file and applies what can be applied to
+	// a running service. The signal context above deliberately does not include
+	// it: a reload is not a shutdown, and wiring it into NotifyContext would
+	// stop the workers.
+	reload := &reloader{
+		path:     *configPath,
+		level:    levelVar,
+		live:     live,
+		router:   rtr,
+		worker:   worker,
+		breakers: breakers,
+		channels: channelSource,
+		log:      log,
+		current:  cfg,
+	}
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	go watchForReload(ctx, reload, hup, log)
 
 	errCh := make(chan error, 1)
 
@@ -335,10 +362,16 @@ func retryPolicy(cfg config.RetryConfig) queue.Policy {
 	}
 }
 
-func newLogger(cfg config.LogConfig) *slog.Logger {
-	var level slog.Level
+// newLogger builds the logger and the level variable behind it.
+//
+// The level is a LevelVar rather than a fixed value so that a reload can change
+// it. An operator debugging an incident should be able to turn on debug logging
+// without restarting the service they are debugging.
+func newLogger(cfg config.LogConfig) (*slog.Logger, *slog.LevelVar) {
+	level := new(slog.LevelVar)
+	level.Set(slog.LevelInfo)
 	if err := level.UnmarshalText([]byte(strings.TrimSpace(cfg.Level))); err != nil {
-		level = slog.LevelInfo
+		level.Set(slog.LevelInfo)
 	}
 
 	opts := &slog.HandlerOptions{Level: level}
@@ -349,5 +382,53 @@ func newLogger(cfg config.LogConfig) *slog.Logger {
 	} else {
 		h = slog.NewJSONHandler(os.Stdout, opts)
 	}
-	return slog.New(h)
+	return slog.New(h), level
+}
+
+// watchForReload runs the SIGHUP loop.
+//
+// SIGHUP rather than watching the file: a reload is a decision, not an
+// observation. A file watcher would reload on the half-written file an editor
+// saves on the way to the complete one, and the operator would have no way to
+// say "not yet".
+// The channel is a parameter rather than created inside, so that the loop can
+// be tested. signal.Notify is the only part that cannot be: Windows has no
+// SIGHUP to deliver, so a test there would prove nothing about the five lines
+// around it either way.
+func watchForReload(ctx context.Context, r *reloader, signals <-chan os.Signal, log *slog.Logger) {
+	defer log.Info("reload: no longer watching for signals")
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-signals:
+			r.reload(ctx)
+		}
+	}
+}
+
+// runHealthcheck probes a running instance and reports the outcome as an exit
+// code.
+//
+// It exists because the container image is distroless: there is no shell, no
+// curl and no wget inside it, so a container healthcheck has nothing to run
+// except the binary itself. Kubernetes and compose can both use this.
+func runHealthcheck(base string) error {
+	if !strings.Contains(base, "://") {
+		base = "http://" + base
+	}
+	url := strings.TrimRight(base, "/") + "/healthz"
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return fmt.Errorf("healthcheck: %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("healthcheck: %s returned %d", url, resp.StatusCode)
+	}
+	return nil
 }

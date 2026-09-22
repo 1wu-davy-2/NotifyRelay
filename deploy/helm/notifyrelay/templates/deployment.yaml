@@ -1,0 +1,128 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "notifyrelay.fullname" . }}
+  labels:
+    {{- include "notifyrelay.labels" . | nindent 4 }}
+spec:
+  # Not a value. The queue is one SQLite file on one volume; a second replica
+  # would be a second relay with its own queue rather than a copy of this one,
+  # and the two would deliver different halves of the traffic and drift apart.
+  replicas: 1
+  strategy:
+    # Recreate, not RollingUpdate. The volume is ReadWriteOnce, so a rolling
+    # update would try to start the new pod while the old one still holds the
+    # database, and the new one would sit waiting for a volume that is never
+    # released.
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "notifyrelay.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Rolls the pods when the configuration changes. Without it a
+        # `helm upgrade --set config.log.level=debug` would report success and
+        # change nothing.
+        checksum/config: {{ .Values.config | toYaml | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "notifyrelay.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "notifyrelay.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # Long enough for the queue to drain what it is holding. SIGTERM makes
+      # the service stop accepting and finish in-flight deliveries; a shorter
+      # grace period leaves them to the orphan sweep, which is correct but
+      # delivers them later.
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      containers:
+        - name: notifyrelay
+          image: {{ include "notifyrelay.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["--config", "/etc/notifyrelay/config.yaml"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            {{- if .Values.service.smtp.enabled }}
+            - name: smtp
+              containerPort: {{ .Values.service.smtp.port }}
+              protocol: TCP
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ include "notifyrelay.secretName" . }}
+          {{- if .Values.probes.liveness.enabled }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          {{- end }}
+          {{- if .Values.probes.readiness.enabled }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/notifyrelay
+              readOnly: true
+            - name: data
+              mountPath: /data
+            # readOnlyRootFilesystem is on, and the service writes nothing
+            # outside /data — but the Go runtime and any library that wants a
+            # temporary directory needs one that exists and is writable.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "notifyrelay.fullname" . }}
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "notifyrelay.fullname" . }}
+          {{- else }}
+          # No persistence: the queue is lost when the pod restarts. Acceptable
+          # for a demonstration and wrong for anything that matters — a
+          # notification accepted and not yet delivered is gone.
+          emptyDir: {}
+          {{- end }}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

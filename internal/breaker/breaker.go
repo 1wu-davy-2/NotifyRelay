@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"notifyrelay/internal/channel"
@@ -105,12 +106,41 @@ type Breaker struct {
 
 // Manager holds one breaker per channel.
 type Manager struct {
-	settings Settings
+	settings atomic.Pointer[Settings]
 	store    Store
 	log      *slog.Logger
 
 	mu       sync.Mutex
 	breakers map[string]*Breaker
+}
+
+// SetSettings replaces the thresholds.
+//
+// It reaches the breakers that already exist as well as the ones created
+// later: a threshold that applied only to channels nobody had delivered to yet
+// would be a setting that appears not to work. A breaker mid-outage keeps its
+// state — raising the failure threshold does not close a channel that is
+// already open, and it should not. The operator asked for a different
+// threshold, not for the outage to be forgotten.
+func (m *Manager) SetSettings(s Settings) {
+	normalized := s.Normalize()
+	m.settings.Store(&normalized)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, b := range m.breakers {
+		b.mu.Lock()
+		b.settings = normalized
+		b.mu.Unlock()
+	}
+}
+
+// currentSettings returns the live thresholds.
+func (m *Manager) currentSettings() Settings {
+	if s := m.settings.Load(); s != nil {
+		return *s
+	}
+	return DefaultSettings()
 }
 
 // NewManager builds a breaker manager. A nil store means state is kept in
@@ -119,12 +149,14 @@ func NewManager(settings Settings, store Store, log *slog.Logger) *Manager {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Manager{
-		settings: settings.Normalize(),
+	m := &Manager{
 		store:    store,
 		log:      log,
 		breakers: map[string]*Breaker{},
 	}
+	m.settings.Store(&Settings{})
+	m.SetSettings(settings)
+	return m
 }
 
 // Reset returns a channel's breaker to closed, reporting the state it replaced.
@@ -149,7 +181,7 @@ func (m *Manager) For(channelName string) *Breaker {
 	if !ok {
 		b = &Breaker{
 			channel:  channelName,
-			settings: m.settings,
+			settings: m.currentSettings(),
 			store:    m.store,
 			log:      m.log,
 			state:    StateClosed,

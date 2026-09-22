@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "notifyrelay.fullname" . }}
+  labels:
+    {{- include "notifyrelay.labels" . | nindent 4 }}
+data:
+  # The configuration file, rendered from .Values.config.
+  #
+  # Credentials in here must be written as `!env NAME` and supplied through the
+  # Secret below. A literal in this file would be readable by anything that can
+  # read a ConfigMap, which is a much larger set of things than can read a
+  # Secret.
+  config.yaml: |
+    {{- toYaml .Values.config | nindent 4 }}

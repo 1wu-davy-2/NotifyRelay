@@ -1,0 +1,207 @@
+# Default values for notifyrelay.
+#
+# The image has no published registry. Build it and push it somewhere your
+# cluster can pull from:
+#
+#   docker build -t registry.example.com/notifyrelay:0.1.0 .
+#   docker push registry.example.com/notifyrelay:0.1.0
+#   helm install notifyrelay deploy/helm/notifyrelay \
+#     --set image.repository=registry.example.com/notifyrelay \
+#     --set image.tag=0.1.0
+
+image:
+  repository: notifyrelay
+  tag: ""            # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Exactly one. The queue is a single SQLite file, so a second replica would be
+# a second relay with its own queue rather than a copy of this one — it would
+# deliver its own share of the traffic and the two would drift. Scale by
+# running more channels on one instance, not more instances.
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 8080
+  # SMTP inbound. Disabled by default: exposing a mail listener is a decision
+  # with consequences beyond this chart, and it needs the config to enable it
+  # too (smtp_in.enabled).
+  smtp:
+    enabled: false
+    port: 2525
+
+# The HTTP API, the operator UI and /metrics all share this port. It is not
+# meant to be reachable from outside the cluster; put an ingress or a port
+# forward in front of it if a human needs to reach the UI.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: notifyrelay.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# Secrets are never written into the config file — the service reads them from
+# the environment and refuses to start if one is missing. Provide them here, or
+# point existingSecret at a Secret you manage yourself.
+#
+# The keys are the ones the configuration file references with `!env`:
+#   NOTIFYRELAY_SECRET_KEY    seals credentials in the database
+#   NOTIFYRELAY_SESSION_KEY   signs operator UI sessions
+#   SMTP_PASSWORD             upstream relay password
+#   ...
+secrets: {}
+#  NOTIFYRELAY_SECRET_KEY: ""
+#  NOTIFYRELAY_SESSION_KEY: ""
+#  SMTP_PASSWORD: ""
+
+# An existing Secret to use instead of `secrets`. It must contain the same keys.
+existingSecret: ""
+
+config:
+  # The configuration file, verbatim. It seeds the database on first boot and
+  # is not read again after that: channels are managed through the operator UI.
+  #
+  # Anything with a credential must use `!env NAME`, never a literal.
+  log:
+    level: info
+    format: json
+
+  server:
+    addr: ":8080"
+
+  timeouts:
+    read: 15s
+    read_header: 5s
+    write: 30s
+    idle: 60s
+    handler: 20s
+    deliver: 15s
+
+  storage:
+    driver: sqlite
+    # Under the mounted volume. Do not point this anywhere else: the volume is
+    # what gets backed up, and a database outside it is a database nobody is
+    # backing up.
+    path: /data/notifyrelay.db
+    spool_dir: /data/spool
+
+  queue:
+    workers: 4
+    batch: 16
+    poll_every: 1s
+    deliver_timeout: 30s
+    release_delay: 30s
+    claim_timeout: 5m
+    recover_every: 100s
+    prune_every: 1h
+    sent_retention: 168h
+    failed_retention: 720h
+    idempotency_retention: 24h
+
+  retry:
+    max_attempts: 5
+    backoff: [30s, 2m, 10m, 1h, 4h]
+    max_age: 24h
+
+  circuit_breaker:
+    enabled: true
+    failure_threshold: 5
+    success_threshold: 2
+    open_timeout: 60s
+    half_open_probes: 1
+
+  smtp_in:
+    enabled: false
+    addr: ":2525"
+    hostname: relay.local
+    allowed_ips: []
+
+  auth:
+    # Generate a digest with: notifyrelay --hash-key 'your-token'
+    # Only the digest goes here; the token itself is never written down.
+    api_keys: []
+    #  - name: internal-services
+    #    key_hash: "sha256:..."
+    #    enabled: true
+
+  admin:
+    enabled: false
+    # username: admin
+    # Generate the hash with: notifyrelay --hash-password 'your-password'
+    # password_hash: "$argon2id$v=19$m=65536,t=3,p=1$..."
+    session_ttl: 12h
+
+  channels: []
+
+persistence:
+  enabled: true
+  # ReadWriteOnce: the database is a single file and SQLite takes an exclusive
+  # lock on it. ReadWriteMany would let two pods open it at once, which SQLite
+  # on a network filesystem does not do safely.
+  accessMode: ReadWriteOnce
+  size: 1Gi
+  storageClass: ""
+  # Set to keep the volume when the release is deleted. The queue lives here.
+  annotations: {}
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+# The liveness probe deliberately does not check the database: a probe that
+# fails on a dependency outage gets the process restarted, which fixes nothing
+# and loses the in-memory rate limiter and quota windows.
+#
+# Readiness does check it, because a relay that cannot store a notification
+# should stop accepting them.
+probes:
+  liveness:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+# The relay drains in-flight deliveries on SIGTERM before it exits. Killing it
+# sooner leaves those to the orphan sweep: they are not lost, but they are
+# delivered later, and the claim timeout is how much later.
+terminationGracePeriodSeconds: 45
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532 # the distroless nonroot user
+  fsGroup: 65532
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]

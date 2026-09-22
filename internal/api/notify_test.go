@@ -126,10 +126,9 @@ func newTestHandlerWithTimeouts(
 	}
 
 	return NewHandler(Deps{
-		Keys:           keys,
+		Live:           NewLive(keys, handlerTimeout),
 		Log:            slog.New(slog.DiscardHandler),
 		Router:         rtr,
-		HandlerTimeout: handlerTimeout,
 	}), rtr
 }
 

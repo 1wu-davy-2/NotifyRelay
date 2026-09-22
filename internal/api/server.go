@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -17,15 +18,53 @@ import (
 	"notifyrelay/internal/router"
 )
 
+// Live is the part of the HTTP layer that can change while the service runs.
+//
+// API keys and the request deadline are both read per request, so both can be
+// replaced without a restart — and rotating a leaked key is exactly the thing
+// an operator should not have to restart a service to do. Everything else in
+// this layer owns a listener or a goroutine and cannot.
+type Live struct {
+	keys    atomic.Pointer[[]auth.Key]
+	timeout atomic.Int64
+}
+
+// NewLive builds the live settings.
+func NewLive(keys []auth.Key, handlerTimeout time.Duration) *Live {
+	l := &Live{}
+	l.SetKeys(keys)
+	l.SetHandlerTimeout(handlerTimeout)
+	return l
+}
+
+// SetKeys replaces the accepted API keys. A request in flight keeps the set it
+// started with; the next one sees the new set.
+func (l *Live) SetKeys(keys []auth.Key) {
+	cp := append([]auth.Key(nil), keys...)
+	l.keys.Store(&cp)
+}
+
+// Keys returns the accepted API keys.
+func (l *Live) Keys() []auth.Key {
+	if k := l.keys.Load(); k != nil {
+		return *k
+	}
+	return nil
+}
+
+// SetHandlerTimeout replaces the whole-request deadline.
+func (l *Live) SetHandlerTimeout(d time.Duration) { l.timeout.Store(int64(d)) }
+
+// HandlerTimeout returns the whole-request deadline.
+func (l *Live) HandlerTimeout() time.Duration { return time.Duration(l.timeout.Load()) }
+
 // Deps is what the HTTP layer needs from the rest of the service.
 type Deps struct {
-	Keys []auth.Key
+	// Live carries the settings that can change while the service runs.
+	Live *Live
 	Log  *slog.Logger
 	// Router delivers notifications; required.
 	Router *router.Router
-	// HandlerTimeout bounds one whole request, fan-out included. Config
-	// validation guarantees it exceeds the per-target delivery timeout.
-	HandlerTimeout time.Duration
 
 	// Queue accepts deliveries for asynchronous sending. When nil, the API
 	// only offers the synchronous path.
@@ -82,14 +121,14 @@ func NewHandler(d Deps) http.Handler {
 	}
 
 	r.Group(func(pr chi.Router) {
-		pr.Use(BearerAuth(d.Keys))
+		pr.Use(BearerAuth(d.Live))
 
 		notify := &notifyHandler{
 			router:  d.Router,
 			queue:   d.Queue,
 			records: d.Idempotency,
 			log:     d.Log,
-			timeout: d.HandlerTimeout,
+			live:    d.Live,
 		}
 		if d.Queue == nil {
 			// Without a queue there is no asynchronous path; the synchronous

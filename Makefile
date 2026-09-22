@@ -8,7 +8,7 @@ GOARCH  ?= amd64
 
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: all build test vet fmt tidy run clean docker
+.PHONY: all build test vet fmt tidy run clean docker compose helm-lint
 
 all: vet test build
 
@@ -40,3 +40,12 @@ clean:
 
 docker:
 	docker build --build-arg TARGETARCH=$(GOARCH) -t $(BINARY):$(VERSION) .
+
+compose:
+	docker compose up -d --build
+
+# Renders the chart without a cluster. Catches template errors that only show
+# up at install time otherwise.
+helm-lint:
+	helm lint deploy/helm/notifyrelay
+	helm template $(BINARY) deploy/helm/notifyrelay > /dev/null

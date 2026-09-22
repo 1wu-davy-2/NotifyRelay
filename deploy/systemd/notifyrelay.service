@@ -1,0 +1,101 @@
+# systemd unit for a bare-metal or VM install.
+#
+#   install -m 0755 notifyrelay /usr/local/bin/notifyrelay
+#   install -d -m 0750 -o notifyrelay -g notifyrelay /var/lib/notifyrelay
+#   install -d -m 0750 /etc/notifyrelay
+#   install -m 0640 -o root -g notifyrelay \
+#       configs/notifyrelay.example.yaml /etc/notifyrelay/config.yaml
+#   install -m 0644 deploy/systemd/notifyrelay.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now notifyrelay
+#
+# The secrets the configuration references with `!env` go in the EnvironmentFile
+# below, which is where the `-` prefix matters: see the note on it.
+
+[Unit]
+Description=NotifyRelay notification relay
+Documentation=https://github.com/1wu-davy-2/NotifyRelay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=notifyrelay
+Group=notifyrelay
+
+# The working directory is where the database and the spool are written, and
+# the shipped configuration names them with relative paths. It must be a
+# directory this user can write to, or the service fails at startup when it
+# tries to create the database.
+WorkingDirectory=/var/lib/notifyrelay
+
+# Secrets live here, not in the configuration file. `!env NAME` reads them from
+# the process environment, and a variable that is missing makes the service
+# refuse to start rather than run with an empty credential.
+#
+# The leading `-` means "do not fail if this file is absent". It is there so a
+# deployment whose channels need no credentials can run without creating an
+# empty file; a deployment that does need them will fail at startup with a
+# message naming the variable, which is the loud failure we want.
+EnvironmentFile=-/etc/notifyrelay/env
+
+ExecStart=/usr/local/bin/notifyrelay --config /etc/notifyrelay/config.yaml
+
+# SIGTERM makes the service stop accepting and drain what it is holding.
+# systemd sends it by default; the timeout is how long it has before SIGKILL.
+# It has to exceed the longest a delivery can take, or a message being
+# delivered when the service stops is killed mid-flight and left to the orphan
+# sweep — not lost, but later.
+KillSignal=SIGTERM
+TimeoutStopSec=45
+
+# Reload the configuration without a restart:
+#
+#   systemctl reload notifyrelay
+#
+# This re-reads the file and applies the settings that can be applied to a
+# running process: log level, API keys, timeouts, the retry cadence, breaker
+# thresholds, and the channel configuration from the database. Settings that
+# own a listener or a worker pool — the listen address, the storage path, the
+# worker count — need a restart, and the service says so in its log when it
+# notices one has changed.
+ExecReload=/bin/kill -HUP $MAINPID
+
+Restart=on-failure
+RestartSec=5s
+
+# ------------------------------------------------------------------ hardening
+#
+# The service needs three things: the network, its data directory, and the
+# configuration file. Everything below removes the rest.
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=false   # the Go runtime does not need it, but cgo-free
+                               # builds have been known to trip this on some
+                               # kernels; leaving it off costs little here.
+
+# ProtectSystem=strict makes everything read-only except what is listed here.
+ReadWritePaths=/var/lib/notifyrelay
+ReadOnlyPaths=/etc/notifyrelay
+
+# A relay dials out. It listens on its own ports and nothing else.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# ------------------------------------------------------------------- limits
+
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

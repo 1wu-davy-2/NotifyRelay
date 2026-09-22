@@ -820,7 +820,55 @@ JS 只负责按选中的类型显示、按 `ShowIf` 联动——所以 Go 测试
 `deadLetter` 改为保留正文，由 `failed_retention` 的清理策略兜底——
 一个没有消息的重放不是重放，是一行"这条通知丢了且找不回来"的记录。
 
-### M5.3 · 部署产物（未开始）
+### M5.3 · 部署产物与运维文档
+
+**产出**：`deploy/helm/notifyrelay/`（chart）、`deploy/systemd/notifyrelay.service`、
+`.env.example`、`docs/06-operations.md`（运维手册）、修订的 `Dockerfile` 与 `docker-compose.yml`。
+
+**SIGHUP 热加载**（验收 #8）。每处改动都是**原子替换一个每次使用才读的值**，
+所以进行中的投递不被打断——正在重试的投递保留它的尝试计数，下一次决策时用新的节奏。
+
+| 生效 | 需要重启（**日志里会列出来**） |
+|---|---|
+| `log.level`、`auth.api_keys`、`timeouts.*`、`retry.*`、`circuit_breaker.*`、渠道配置 | `server.addr`、`storage.*`、`queue.workers`/`batch`/`poll_every`/`claim_timeout`/`recover_every`/retention、`smtp_in.*`、`admin.*`、`secret_key` |
+
+后半张表不是"没做"，是**做不到**：它们各自持有监听器、连接或 goroutine，
+没法在脚下替换掉自己。假装可以，只会得到一个报告新地址却仍在旧地址上服务的进程。
+服务会打 `reload: some settings need a restart and were not applied` 并列出是哪些——
+**看到 `reload: done` 不等于全都生效了**。
+
+文件解析失败或校验不过时，服务保持原配置继续跑。重载不是停下来的理由，
+刚打错字的运维不该以一次故障的形式发现这件事。
+
+**Dockerfile 修了一个真实缺陷**：非 root 用户在 `/` 下创建不了数据库。
+distroless 默认工作目录是 `/`，而服务首次启动要建 `data/notifyrelay.db`——
+**容器会在启动时因权限失败**。加了 `WORKDIR /app`，数据卷挂在 `/app/data`，
+示例配置的相对路径因此不用改。
+
+另外加了 `--healthcheck` 子命令：**distroless 镜像里没有 shell、没有 curl**，
+容器探针除了这个二进制自己没有别的东西可跑。compose 与 k8s 都用它。
+
+**`secret_key` 与 `session_key` 必须是不同的值**，`Validate()` 会拒绝相同的情况。
+一个密钥服务两个用途，意味着较弱那一侧的弱点变成两侧共同的弱点。
+
+**新增 `deploy/` 包**，只放检查不放代码：YAML 能否解析、Helm 模板能否编译、
+systemd unit 里关键指令在不在、Dockerfile 的探针有没有用 shell 工具。
+这些检查**刻意是浅的**——它们证明不了镜像能构建、chart 能安装，
+只有 Docker 和 Helm 能证明，而本机两个都没有。
+
+#### 仍未验证（已写进 `06-operations.md` §8）
+
+- **Docker 镜像从未构建过**（本机无 Docker）。构建命令本身验证过：
+  `CGO_ENABLED=0 GOOS=linux GOARCH=amd64` 产出的确实是
+  `ELF 64-bit LSB executable, x86-64, statically linked, stripped`——
+  distroless 的前提成立。未验证的是镜像组装、基础镜像、非 root 下的文件权限。
+- **Helm chart 从未 `helm install` 过**（本机无 helm）。
+- **systemd unit 从未在 systemd 上跑过**。
+- **钉钉/飞书加签未对真实平台验证**（M3 起就挂着）。
+- **SIGHUP 的信号投递在 Windows 上无法验证**。重载逻辑有测试覆盖，
+  未覆盖的是 `signal.Notify` 那一行。
+
+这些不是"应该没问题"，是"没试过"。
 
 ### 本轮实测
 

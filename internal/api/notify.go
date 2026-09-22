@@ -89,12 +89,12 @@ type notifyHandler struct {
 	queue   Enqueuer
 	records IdempotencyStore
 	log     *slog.Logger
-	timeout time.Duration
+	live    *Live
 }
 
 // ServeHTTP implements POST /api/v1/notify.
 func (h *notifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), h.timeout)
+	ctx, cancel := context.WithTimeout(r.Context(), h.live.HandlerTimeout())
 	defer cancel()
 
 	key := r.Header.Get(idempotencyHeader)

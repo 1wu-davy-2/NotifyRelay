@@ -116,7 +116,10 @@ type instanceSet struct {
 type Router struct {
 	set atomic.Pointer[instanceSet]
 
-	deliverTimeout time.Duration
+	// deliverTimeout is swapped by SetDeliverTimeout: an operator raising a
+	// timeout during an incident should not have to restart the service that
+	// is holding the queue they are trying to drain.
+	deliverTimeout atomic.Int64
 	recorder       audit.Recorder
 	limiter        *limiter
 	breakers       *breaker.Manager
@@ -135,8 +138,7 @@ func New(opts Options) (*Router, error) {
 	}
 
 	r := &Router{
-		deliverTimeout: opts.DeliverTimeout,
-		recorder:       opts.Audit,
+		recorder: opts.Audit,
 		limiter:        newLimiter(),
 		breakers:       opts.Breaker,
 		quota:          opts.Quota,
@@ -148,8 +150,24 @@ func New(opts Options) (*Router, error) {
 		return nil, err
 	}
 	r.set.Store(set)
+	r.SetDeliverTimeout(opts.DeliverTimeout)
 
 	return r, nil
+}
+
+// SetDeliverTimeout replaces the per-call deadline.
+//
+// A delivery already in flight keeps the deadline it started with; the new one
+// applies to calls made after it. Changing the timeout under a call in progress
+// would either cut it short for no reason or extend a deadline the caller has
+// already accounted for.
+func (r *Router) SetDeliverTimeout(d time.Duration) {
+	r.deliverTimeout.Store(int64(d))
+}
+
+// DeliverTimeout returns the live per-call deadline.
+func (r *Router) DeliverTimeout() time.Duration {
+	return time.Duration(r.deliverTimeout.Load())
 }
 
 // buildSet constructs an instance set from configuration.
@@ -406,7 +424,7 @@ func (r *Router) Deliver(ctx context.Context, requestID, target string, msg *mes
 			break
 		}
 
-		sendCtx, cancel := context.WithTimeout(ctx, r.deliverTimeout)
+		sendCtx, cancel := context.WithTimeout(ctx, r.DeliverTimeout())
 		one := ch.Send(sendCtx, part)
 		cancel()
 		called = true

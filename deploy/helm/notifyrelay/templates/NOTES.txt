@@ -1,0 +1,41 @@
+NotifyRelay is installed as {{ include "notifyrelay.fullname" . }}.
+
+The queue lives on a PersistentVolumeClaim and there is exactly one replica.
+That is not a limitation to work around: the queue is a single SQLite file, so
+a second replica would be a second relay rather than a copy of this one.
+
+{{- if not .Values.secrets }}
+{{- if not .Values.existingSecret }}
+
+WARNING: no secrets were provided.
+
+The service will refuse to start if the configuration references a `!env`
+variable that is not set — which is the intended behaviour, and it means the
+pod will crash-loop rather than run with an empty credential. Supply them:
+
+  helm upgrade {{ .Release.Name }} {{ .Chart.Name }} \
+    --set secrets.NOTIFYRELAY_SECRET_KEY="$(openssl rand -base64 32)" \
+    --set secrets.NOTIFYRELAY_SESSION_KEY="$(openssl rand -base64 32)"
+
+Or point existingSecret at a Secret you manage yourself.
+{{- end }}
+{{- end }}
+
+Reach the operator UI:
+
+  kubectl port-forward svc/{{ include "notifyrelay.fullname" . }} 8080:{{ .Values.service.port }}
+
+Then open http://localhost:8080/admin
+
+{{- if not .Values.config.admin.enabled }}
+
+The operator UI is disabled in this release. Enable it with admin.enabled,
+admin.username, admin.password_hash (from `notifyrelay --hash-password`) and a
+session key.
+{{- end }}
+
+Back up the volume — it holds the queue, the channel configuration and the
+sealed credentials:
+
+  kubectl exec deploy/{{ include "notifyrelay.fullname" . }} -- \
+    /notifyrelay --version   # to check the pod is the one you think it is
