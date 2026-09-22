@@ -149,4 +149,32 @@ CREATE TABLE IF NOT EXISTS channel_instances (
     created_at  INTEGER NOT NULL,
     updated_at  INTEGER NOT NULL
 );
+
+-- Producer credentials.
+--
+-- key_hash is the sha256 digest, never the token. The unique index is what
+-- makes the lookup on the authentication path an index seek rather than a scan
+-- of every key for every notification, and it is also what makes a duplicate
+-- digest impossible to store twice.
+CREATE TABLE IF NOT EXISTS api_keys (
+    id           TEXT    PRIMARY KEY,
+    name         TEXT    NOT NULL,
+    key_hash     TEXT    NOT NULL UNIQUE,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    created_at   INTEGER NOT NULL,
+    last_used_at INTEGER
+);
+
+-- The operator's sign-in.
+--
+-- One row, enforced rather than assumed: the CHECK on the primary key means a
+-- second credential cannot be created by a bug, and the absence of the row is
+-- an unambiguous "nobody has claimed this deployment yet" — which is what opens
+-- the first-run page.
+CREATE TABLE IF NOT EXISTS admin_credentials (
+    id            INTEGER PRIMARY KEY CHECK (id = 1),
+    username      TEXT    NOT NULL,
+    password_hash TEXT    NOT NULL,
+    created_at    INTEGER NOT NULL
+);
 `

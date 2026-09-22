@@ -1,0 +1,36 @@
+{{template "head" .}}
+<main class="centred">
+  <div class="login">
+    <h1>NotifyRelay</h1>
+
+    <p class="muted">
+      This deployment has no administrator yet. Create one now — this page
+      closes permanently once you do, and it is not reachable again.
+    </p>
+
+    {{if .Error}}<p class="flash bad">{{.Error}}</p>{{end}}
+
+    <form id="setup-form">
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username" autocomplete="username"
+             autofocus required>
+
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password"
+             autocomplete="new-password" required minlength="12">
+
+      <label for="confirm">Confirm password</label>
+      <input type="password" id="confirm" name="confirm"
+             autocomplete="new-password" required minlength="12">
+
+      <button type="submit" class="primary">Create administrator</button>
+    </form>
+
+    <p class="desc">
+      At least 12 characters. This account can reconfigure where every
+      notification in the estate is delivered, so length is the only rule —
+      a passphrase beats a short password with symbols in it.
+    </p>
+  </div>
+</main>
+{{template "foot" .}}

@@ -150,6 +150,29 @@ tbody tr:hover { background: #141c25; }
 .login label { margin-top: 12px; }
 .login button { width: 100%; margin-top: 18px; }
 
+/* ------------------------------------------------------------- API keys */
+
+/* The token dialog. Shown once and never again, so it has to be readable
+ * without being dismissable by accident — no backdrop click handler, and the
+ * only way out is the button. */
+dialog {
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 20px;
+  max-width: 640px;
+}
+dialog::backdrop { background: rgba(0, 0, 0, .6); }
+dialog h3 { margin-top: 0; }
+dialog pre {
+  background: #0d1117; border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 12px;
+  overflow-x: auto; word-break: break-all; white-space: pre-wrap;
+  margin: 12px 0;
+}
+dialog .row { margin-top: 14px; }
+
 /* ------------------------------------------------------------- API docs */
 
 /* Code samples are wider than a table wants to be, so this one page gets more

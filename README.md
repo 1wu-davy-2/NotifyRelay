@@ -59,41 +59,31 @@ NotifyRelay 就是中间那一个进程，把真正难的那部分接过来。
 
 ## 快速开始
 
-有 Docker 的话，三十秒：
+**一条命令。** 不需要先写配置文件，不需要先生成密钥，不需要先算密码哈希：
 
 ```bash
 git clone https://github.com/1wu-davy-2/NotifyRelay.git && cd NotifyRelay
-cp .env.example .env
-cp configs/notifyrelay.example.yaml configs/notifyrelay.yaml
-```
-
-要填两个值，两个生成器都在同一个镜像里：
-
-```bash
-docker compose run --rm notifyrelay --gen-key               # -> .env 里的 NOTIFYRELAY_SECRET_KEY
-docker compose run --rm notifyrelay --hash-key 'your-token' # -> 配置里的 auth.api_keys[0].key_hash
-```
-
-只存摘要，明文 token 不写入任何地方。
-
-然后加一个通道。第一次跑，指向任何能回显的地址就够了：
-
-```yaml
-channels:
-  - name: oncall
-    type: webhook
-    enabled: true
-    config:
-      url: https://example.com/notify
-```
-
-> **这一步必须在第一次 `up` 之前做完。** `channels:` 块只在首次启动时把配置播种进数据库
-> 一次，此后不再被读取——这正是"运维在后台删掉的通道不会在下次重启后复活"的实现方式。
-> 之后通道都通过后台管理。
-
-```bash
 docker compose up -d
 ```
+
+打开 `http://localhost:8080/admin`，第一次访问会看到「创建管理员」页面。建完账号，
+通道、API Key 全部在后台里加。
+
+下面这些都不需要你手动做，列出来是为了说明它们确实发生了：
+
+| | |
+|---|---|
+| **两个密钥** | 首次启动生成到数据目录的 `keys/` 下，权限 0600。重启时读回来。 |
+| **管理员账号** | 没有预置。第一个打开后台的人创建，之后那个页面永久关闭。 |
+| **API Key** | 在后台的 **Keys** 页创建，明文只显示一次。 |
+| **通道** | 在后台的 **Channels** 页添加。 |
+
+> **先到先得的那段窗口。** 从容器启动到你打开后台之间，先访问的人会成为管理员。
+> 内网部署 + 立刻完成，窗口极小；启动日志里也会明确写出这件事。
+> 不想留这个窗口，就在配置里写死 `admin.password_hash`（用
+> `docker compose run --rm notifyrelay --hash-password '...'` 生成），那个页面就不会出现。
+
+8080 被占用的话，`.env` 里写 `NOTIFYRELAY_HTTP_PORT=18080` 即可，不用改 compose 文件。
 
 确认它活着。镜像是 distroless，没有 shell，所以探针就是二进制自己：
 
@@ -101,7 +91,7 @@ docker compose up -d
 docker compose exec notifyrelay /notifyrelay --healthcheck 127.0.0.1:8080
 ```
 
-发一条：
+在后台建好一个通道、一个 API Key 之后，发一条：
 
 ```bash
 curl -X POST http://127.0.0.1:8080/api/v1/notify \
@@ -117,7 +107,8 @@ curl -X POST http://127.0.0.1:8080/api/v1/notify \
       }'
 ```
 
-`$TOKEN` 就是你摘要进 `auth.api_keys` 的那个 token。
+`$TOKEN` 是创建时显示的那一串，以 `nr_` 开头。**只存摘要，那一次之后就再也拿不回来了**——
+丢了就删掉重建。
 
 **默认异步**：入队即返回 `202` 与投递 ID。
 

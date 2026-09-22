@@ -1,8 +1,12 @@
 # docker compose up -d
 #
-# Copy configs/notifyrelay.example.yaml to configs/notifyrelay.yaml, edit it,
-# and put the secrets it references in a .env file next to this one. Compose
-# reads .env automatically.
+# That is the whole deployment. The image carries a working configuration, the
+# two long-lived keys are generated into the data volume on first boot, and
+# everything else — the administrator account, the channels, the API keys — is
+# created at http://localhost:8080/admin.
+#
+# To change any of it, mount your own configuration over the one in the image;
+# see the commented volume below.
 
 services:
   notifyrelay:
@@ -15,23 +19,24 @@ services:
     restart: unless-stopped
 
     ports:
-      - "8080:8080" # HTTP API, the operator UI, /metrics
-      - "2525:2525" # SMTP inbound
+      # Host port is configurable so a machine already using 8080 does not need
+      # this file edited. Set NOTIFYRELAY_HTTP_PORT in .env, or here.
+      - "${NOTIFYRELAY_HTTP_PORT:-8080}:8080" # HTTP API, the operator UI, /metrics
+      - "${NOTIFYRELAY_SMTP_PORT:-2525}:2525" # SMTP inbound
 
     environment:
-      # Passed through from the host environment or from .env, and *only* if
-      # set there.
+      # Nothing here is required. These are passed through from the host
+      # environment or from .env, and *only* if set there — which matters for a
+      # deployment that mounts its own configuration and writes `!env` in it.
       #
-      # The list form matters. Writing `SMTP_PASSWORD: ${SMTP_PASSWORD:-}`
-      # would define the variable as an empty string even when nobody set it,
-      # and the configuration loader treats "set but empty" as a real value —
-      # so a deployment that meant to have no password would start with one,
-      # which is the opposite of what `!env` is for. A variable that is not set
-      # here is not set in the container, and a `!env` that references it fails
-      # startup loudly.
-      - SMTP_PASSWORD
+      # The list form is what makes that work. Writing
+      # `SMTP_PASSWORD: ${SMTP_PASSWORD:-}` would define the variable as an
+      # empty string even when nobody set it, and the configuration loader
+      # treats "set but empty" as a real value — so a deployment that meant to
+      # have no password would start with one.
       - NOTIFYRELAY_SECRET_KEY
       - NOTIFYRELAY_SESSION_KEY
+      - SMTP_PASSWORD
       - WECOM_CORP_SECRET
       - DINGTALK_SECRET
       - FEISHU_SECRET
@@ -39,12 +44,19 @@ services:
       - WEBHOOK_SECRET
 
     volumes:
-      # The configuration seeds the database on first boot and is not read
-      # again after that; channels are managed through the operator UI.
-      - ./configs/notifyrelay.yaml:/etc/notifyrelay/config.yaml:ro
-      # The database and the spooled message bodies. This is the volume that
-      # has to be backed up.
+      # The database, the spooled message bodies, and the generated keys. This
+      # is the volume that has to be backed up — it is a complete, restorable
+      # backup, keys included.
       - notifyrelay-data:/app/data
+
+      # To use your own configuration instead of the one in the image, create
+      # the file first and then uncomment this. The `cp` matters: Docker creates
+      # a *directory* at the mount point when the source does not exist, and the
+      # service then fails to read it with a message about a directory.
+      #
+      #   cp configs/notifyrelay.example.yaml configs/notifyrelay.yaml
+      #
+      # - ./configs/notifyrelay.yaml:/etc/notifyrelay/config.yaml:ro
 
     # The image has no shell, so the healthcheck is the binary probing itself.
     # The Dockerfile declares one; this repeats it so a deployment that builds

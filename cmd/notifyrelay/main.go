@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -117,6 +118,29 @@ func run() error {
 
 	log, levelVar := newLogger(cfg.Log)
 
+	// Both long-lived keys are resolved here, before anything reads them: a
+	// deployment that configures neither gets them generated and written to the
+	// data directory, which is what makes the first `docker compose up` a
+	// complete deployment rather than the first half of one.
+	resolvedKeys, err := cfg.ResolveKeys()
+	if err != nil {
+		return err
+	}
+	for _, k := range resolvedKeys {
+		switch k.Origin {
+		case config.KeyGenerated:
+			// Logged at warn because it is a fact the operator has to know: the
+			// key now exists only on this host, and a restore that does not
+			// include the data directory will not be able to open a single
+			// sealed credential.
+			log.Warn("generated a key and wrote it to the data directory",
+				slog.String("key", k.Path),
+				slog.String("note", "back this up with the database, or the credentials it seals are unrecoverable"))
+		case config.KeyFromFile:
+			log.Info("using a key from the data directory", slog.String("key", k.Path))
+		}
+	}
+
 	// Fail fast when a channel type this binary does not have is configured,
 	// rather than silently skipping the instance and dropping notifications.
 	for _, c := range cfg.Channels {
@@ -144,6 +168,38 @@ func run() error {
 		return err
 	}
 	defer persistence.Close()
+
+	// A deployment with no keys at all accepts nothing: every request to the
+	// notification API is answered 401.
+	//
+	// This used to be a startup error, and it was doing real work — a typo'd
+	// `api_key:` block decodes to zero keys without complaint, and refusing to
+	// start was how that got noticed. Now that keys can be created through the
+	// operator surface, zero is a legitimate state for a service that has just
+	// been deployed, so it is a warning. It must not be a silent one.
+	storedKeys, err := persistence.ListAPIKeys(ctx)
+	if err != nil {
+		return err
+	}
+	if len(keys) == 0 && len(storedKeys) == 0 {
+		log.Warn("no API keys are configured; every request to the notification API will be rejected",
+			slog.String("remedy", "create one in the operator UI, or add auth.api_keys to the configuration file"))
+	}
+
+	// The operator surface is on but nobody has claimed it. Said at startup
+	// because the page is reachable by anyone who can reach the port, and the
+	// window between deploying and claiming is the one moment that matters.
+	if cfg.Admin.Enabled {
+		credential, err := persistence.GetAdminCredential(ctx)
+		if err != nil {
+			return err
+		}
+		if credential == nil && strings.TrimSpace(cfg.Admin.PasswordHash) == "" {
+			log.Warn("the operator UI is enabled and has no administrator yet",
+				slog.String("setup", adminEndpoint(cfg)+"/setup"),
+				slog.String("note", "whoever opens that page first becomes the administrator"))
+		}
+	}
 
 	bodies, err := spool.New(cfg.Storage.SpoolDir)
 	if err != nil {
@@ -195,38 +251,41 @@ func run() error {
 	}
 
 	worker := queue.New(queue.Options{
-		Store:                  persistence,
-		Spool:                  bodies,
-		Router:                 rtr,
-		Policy:                 retryPolicy(cfg.Retry),
-		Log:                    log,
-		Metrics:                mx,
-		Workers:                cfg.Queue.Workers,
-		Batch:                  cfg.Queue.Batch,
-		PollEvery:              cfg.Queue.PollEvery.Std(),
-		DeliverTimeout:         cfg.Queue.DeliverTimeout.Std(),
-		ReleaseDelay:           cfg.Queue.ReleaseDelay.Std(),
-		ClaimTimeout:           cfg.Queue.ClaimTimeout.Std(),
-		RecoverEvery:           cfg.Queue.RecoverEvery.Std(),
-		PruneEvery:             cfg.Queue.PruneEvery.Std(),
-		SentRetention:          cfg.Queue.SentRetention.Std(),
-		FailedRetention:        cfg.Queue.FailedRetention.Std(),
-		IdempotencyRetention:   cfg.Queue.IdempotencyRetention.Std(),
+		Store:                persistence,
+		Spool:                bodies,
+		Router:               rtr,
+		Policy:               retryPolicy(cfg.Retry),
+		Log:                  log,
+		Metrics:              mx,
+		Workers:              cfg.Queue.Workers,
+		Batch:                cfg.Queue.Batch,
+		PollEvery:            cfg.Queue.PollEvery.Std(),
+		DeliverTimeout:       cfg.Queue.DeliverTimeout.Std(),
+		ReleaseDelay:         cfg.Queue.ReleaseDelay.Std(),
+		ClaimTimeout:         cfg.Queue.ClaimTimeout.Std(),
+		RecoverEvery:         cfg.Queue.RecoverEvery.Std(),
+		PruneEvery:           cfg.Queue.PruneEvery.Std(),
+		SentRetention:        cfg.Queue.SentRetention.Std(),
+		FailedRetention:      cfg.Queue.FailedRetention.Std(),
+		IdempotencyRetention: cfg.Queue.IdempotencyRetention.Std(),
 	})
 
 	// The operator surface, when configured. It is built before the API handler
 	// because the API mounts it; when disabled the constructor returns nil and
 	// nothing is mounted.
 	adminHandler := admin.NewHandler(admin.Deps{
-		Config:   cfg.Admin,
-		Channels:   channelSource,
-		Breakers:   breakers,
-		Router:     rtr,
-		Deliveries: persistence,
-		Bodies:     bodies,
-		Waker:      worker,
-		Audit:      persistence,
-		Log:        log,
+		Config:      cfg.Admin,
+		Auth:        cfg.Auth,
+		Channels:    channelSource,
+		Credentials: persistence,
+		Keys:        persistence,
+		Breakers:    breakers,
+		Router:      rtr,
+		Deliveries:  persistence,
+		Bodies:      bodies,
+		Waker:       worker,
+		Audit:       persistence,
+		Log:         log,
 	})
 
 	// The settings that can change while the service runs. Everything else is
@@ -234,15 +293,16 @@ func run() error {
 	live := api.NewLive(keys, cfg.Timeouts.Handler.Std())
 
 	handler := api.NewHandler(api.Deps{
-		Admin:          adminHandler,
-		Live:           live,
-		Log:            log,
-		Router:         rtr,
-		Queue:          worker,
-		Store:          persistence,
-		Ready:          persistence,
-		Idempotency:    persistence,
-		Metrics:        mx,
+		Admin:       adminHandler,
+		Live:        live,
+		Log:         log,
+		Router:      rtr,
+		Queue:       worker,
+		Store:       persistence,
+		Ready:       persistence,
+		Idempotency: persistence,
+		Keys:        persistence,
+		Metrics:     mx,
 	})
 	srv := api.HTTPServer(cfg.Server, cfg.Timeouts, handler)
 
@@ -450,9 +510,24 @@ func runHealthcheck(base string) error {
 // Logged at startup because "is the management interface exposed" is a
 // question somebody asks about a deployment they did not set up, and the
 // answer should not require reading the configuration file to find.
+//
+// The common configuration binds a port without a host (":8080"), which is not
+// a URL — "http://:8080/admin" is a string somebody will try to paste and
+// find does not work. A placeholder host is substituted so the line reads as
+// what it is: an address that needs a host put in front of it.
 func adminEndpoint(cfg *config.Config) string {
 	if !cfg.Admin.Enabled {
 		return "disabled"
 	}
-	return "http://" + cfg.Server.Addr + "/admin"
+
+	host, port, err := net.SplitHostPort(cfg.Server.Addr)
+	if err != nil {
+		// Not a host:port at all; show it verbatim rather than inventing a
+		// structure it does not have.
+		return "http://" + cfg.Server.Addr + "/admin"
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "<this-host>"
+	}
+	return "http://" + net.JoinHostPort(host, port) + "/admin"
 }

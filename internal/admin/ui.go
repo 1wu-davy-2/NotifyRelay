@@ -287,6 +287,19 @@ func (h *handler) render(w http.ResponseWriter, r *http.Request, page string, da
 // checked here and a redirect is what a missing one produces.
 func (h *handler) pageHandler(next func(http.ResponseWriter, *http.Request, string)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Checked before the session, because a deployment with no
+		// administrator has nothing to sign in to: sending the first visitor to
+		// a sign-in form for an account that does not exist is a dead end that
+		// looks like a bug.
+		//
+		// An error here falls through to the ordinary session check rather than
+		// redirecting. A store that cannot answer must not be read as "unclaimed
+		// deployment" — that would hand the setup page to whoever asked next.
+		if required, err := h.setupRequired(r.Context()); err == nil && required {
+			http.Redirect(w, r, "/admin/setup", http.StatusFound)
+			return
+		}
+
 		cookie, err := r.Cookie(cookieName)
 		if err != nil {
 			http.Redirect(w, r, "/admin/login", http.StatusFound)

@@ -36,7 +36,24 @@ const csrfHeader = "X-NotifyRelay-Admin"
 // Deps is what the operator surface needs.
 type Deps struct {
 	// Config carries the operator's username, password hash and session TTL.
+	//
+	// The password hash may be empty, which is the first-run state: the service
+	// serves the create-an-administrator page instead of the sign-in form until
+	// an account exists.
 	Config config.AdminConfig
+	// Auth is the producer-credential configuration. Only the key names are
+	// read, so the API key page can list the ones that live in the file
+	// alongside the ones in the database — a list that showed only half of them
+	// would be wrong in the direction that matters.
+	Auth config.AuthConfig
+	// Credentials holds the administrator created through the first-run page.
+	// Optional; without it the configured password hash is the only way in, and
+	// the setup page is not offered.
+	Credentials store.AdminCredentials
+	// Keys holds the API keys created through the operator surface. Optional;
+	// without it the keys named in the configuration file are the only ones
+	// that authenticate.
+	Keys store.APIKeys
 	// Channels reads and writes the stored channel instances.
 	Channels *config.ChannelSource
 	// Breakers is reset on request. Optional.
@@ -79,13 +96,18 @@ func NewHandler(d Deps) http.Handler {
 		log = slog.Default()
 	}
 
-	// Configuration validation already refuses a half-configured admin block,
-	// so a parse failure here is a bug rather than an operator mistake — and it
-	// must not degrade into "start anyway without a password check".
-	hash, err := auth.ParsePasswordHash(d.Config.PasswordHash)
-	if err != nil {
-		log.Error("admin: the configured password hash is unusable; the admin surface will refuse every login",
-			slog.String("error", err.Error()))
+	// An empty hash is the first-run state, not a fault: the setup page creates
+	// the account. Only a hash that was written down and cannot be parsed is
+	// worth an error, and it must not degrade into "start anyway without a
+	// password check".
+	var hash auth.PasswordHash
+	if strings.TrimSpace(d.Config.PasswordHash) != "" {
+		parsed, err := auth.ParsePasswordHash(d.Config.PasswordHash)
+		if err != nil {
+			log.Error("admin: the configured password hash is unusable; signing in with it will fail",
+				slog.String("error", err.Error()))
+		}
+		hash = parsed
 	}
 
 	h := &handler{
@@ -110,6 +132,12 @@ func NewHandler(d Deps) http.Handler {
 	r.Post("/api/login", h.login)
 	r.Post("/api/logout", h.logout)
 
+	// First run. Outside the session group because there is nothing to
+	// authenticate against yet — the account this creates is the one every
+	// other route checks for. It closes itself the moment one exists.
+	r.Get("/setup", h.setupPage)
+	r.Post("/api/setup", h.createAdministrator)
+
 	// Pages redirect to the sign-in form rather than answering 401: a browser
 	// renders a JSON error as a blank page, and "sign in first" is not an
 	// answer to "why is this page empty".
@@ -124,6 +152,7 @@ func NewHandler(d Deps) http.Handler {
 		pr.Get("/deliveries", h.pageHandler(h.deliveriesPage))
 		pr.Get("/deliveries/{id}", h.pageHandler(h.deliveryPage))
 		pr.Get("/audit", h.pageHandler(h.auditPage))
+		pr.Get("/keys", h.pageHandler(h.keysPage))
 
 		// A page, not JSON, so it belongs in this group: an operator who is not
 		// signed in should land on the sign-in form rather than on a blank page
@@ -154,6 +183,11 @@ func NewHandler(d Deps) http.Handler {
 		pr.Get("/api/stats", h.stats)
 
 		pr.Get("/api/audit", h.listAudit)
+
+		pr.Get("/api/keys", h.listKeys)
+		pr.Post("/api/keys", h.createKey)
+		pr.Post("/api/keys/{id}", h.updateKey)
+		pr.Delete("/api/keys/{id}", h.deleteKey)
 	})
 
 	return r

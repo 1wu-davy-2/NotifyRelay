@@ -1,0 +1,91 @@
+# The configuration the container image ships with.
+#
+# It exists so that `docker compose up -d` is a complete deployment. The
+# alternative — mount the example configuration, generate two keys, hash a
+# password and fill them all in first — is the friction that produces one
+# secret reused across deployments, or a password hash pasted into a ticket.
+#
+# Nothing here is a secret, and nothing here needs editing before the first
+# boot. Mount your own file over /etc/notifyrelay/config.yaml to change any of
+# it.
+#
+# What this file deliberately does NOT set:
+#
+#   secret_key    Generated on first boot into <data>/keys/secret.key. It seals
+#                 channel credentials in the database, so back the data
+#                 directory up — a backup without it is a backup of ciphertext.
+#
+#   session_key   Generated the same way. Kept separate from secret_key because
+#                 one key must not serve two purposes.
+#
+#   admin.*       No password hash. The first person to open /admin creates the
+#                 administrator, and that page closes permanently afterwards.
+
+log:
+  level: info
+  format: json
+
+server:
+  addr: ":8080"
+
+timeouts:
+  read: 15s
+  read_header: 5s
+  write: 30s
+  idle: 60s
+  handler: 20s
+  deliver: 15s
+
+storage:
+  driver: sqlite
+  path: data/notifyrelay.db
+  spool_dir: data/spool
+
+queue:
+  workers: 4
+  batch: 16
+  poll_every: 1s
+  deliver_timeout: 30s
+  release_delay: 30s
+  claim_timeout: 5m
+  recover_every: 100s
+  prune_every: 1h
+  sent_retention: 168h
+  failed_retention: 720h
+  idempotency_retention: 24h
+
+# On, unlike the binary's default.
+#
+# The two defaults differ on purpose. A binary started by hand on a machine that
+# may be exposed should not open a management interface nobody asked for. A
+# container built from this image has been asked for, and the whole point of the
+# image is that it can be configured without a text editor — which needs the UI.
+#
+# The exposure is bounded by the first-run flow: until somebody claims it, the
+# only page it serves is the one that creates the administrator.
+admin:
+  enabled: true
+  session_ttl: 12h
+
+# Empty on purpose. Keys are created in the operator UI and stored in the
+# database; one written here works too, and is listed alongside them.
+auth:
+  api_keys: []
+
+# Empty on purpose. Channels are added in the operator UI.
+#
+# This block seeds the database once, on the first boot, and is never read
+# again — which is what stops a channel an operator deletes from coming back
+# after a restart.
+channels: []
+
+# Off by default. SMTP inbound needs a hostname and an allow-list that are
+# specific to a deployment, so it is a decision rather than a default.
+smtp_in:
+  enabled: false
+  addr: ":2525"
+  hostname: relay.local
+  allowed_ips: []
+  auth:
+    enabled: false
+    username: ""

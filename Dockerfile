@@ -40,6 +40,12 @@ COPY --from=build /out/notifyrelay /notifyrelay
 COPY --from=build /src/NOTICE /NOTICE
 COPY --from=build /src/LICENSE /LICENSE
 
+# A working configuration, so the image runs without one being written first.
+# It sets no secrets: both keys are generated into the data directory on first
+# boot, and the administrator is created through the UI. Mount your own file
+# over this path to change anything.
+COPY --from=build /src/deploy/docker/config.yaml /etc/notifyrelay/config.yaml
+
 # 65532 is the nonroot user in the distroless base. Numeric because the final
 # stage has no /etc/passwd entry to resolve a name against.
 COPY --chown=65532:65532 --from=build /out/app /app

@@ -1,0 +1,93 @@
+{{template "head" .}}
+{{template "nav" .}}
+<main>
+  {{template "flash" .}}
+  <h1>API keys</h1>
+  <p class="muted">
+    What producers authenticate with. A key is shown once, when it is created —
+    only its digest is stored, so nothing here can show it to you again. If one
+    is lost, delete it and make another.
+  </p>
+
+  <div class="card">
+    <h3>New key</h3>
+    <div class="row">
+      <div style="min-width: 260px;">
+        <label for="key-name">Name</label>
+        <input type="text" id="key-name" placeholder="ci-pipeline" autocomplete="off">
+      </div>
+      <button type="button" class="primary" id="create-key">Create</button>
+    </div>
+    <p class="desc">
+      The name is for you, not for the service: it is what appears in the audit
+      trail when the key is used to change something, and what you will read in
+      six months when deciding whether it can be deleted.
+    </p>
+  </div>
+
+  {{if .Configured}}
+  <p class="muted small">
+    {{.Configured}} key(s) come from the configuration file. They work, and they
+    are listed below, but they cannot be changed here — editing the file is what
+    changes those.
+  </p>
+  {{end}}
+
+  {{if .Keys}}
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th><th>Source</th><th>Status</th><th>Created</th><th>Last used</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {{range .Keys}}
+      <tr>
+        <td>{{.Name}}</td>
+        <td><span class="tag">{{.Source}}</span></td>
+        <td>
+          {{if .Enabled}}<span class="tag on">enabled</span>
+          {{else}}<span class="tag off">disabled</span>{{end}}
+        </td>
+        <td>{{if .CreatedAt}}{{.CreatedAt}}{{else}}<span class="muted">—</span>{{end}}</td>
+        <td>
+          {{if .LastUsedAt}}{{.LastUsedAt}}
+          {{else}}<span class="muted">never</span>{{end}}
+        </td>
+        <td class="actions">
+          {{if eq .Source "database"}}
+            {{if .Enabled}}
+              <button type="button" data-disable-key="{{.ID}}">Disable</button>
+            {{else}}
+              <button type="button" data-enable-key="{{.ID}}">Enable</button>
+            {{end}}
+            <button type="button" class="danger" data-delete-key="{{.ID}}" data-key-name="{{.Name}}">Delete</button>
+          {{else}}
+            <span class="muted small">set in the configuration file</span>
+          {{end}}
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="muted">
+    No keys yet. Until one exists, every request to the notification API is
+    answered <code>401</code>.
+  </p>
+  {{end}}
+
+  <dialog id="token-dialog">
+    <h3>Copy this now</h3>
+    <p class="muted">
+      This is the only time the token is shown. It is not stored anywhere in a
+      form that can be read back.
+    </p>
+    <pre><code id="token-value"></code></pre>
+    <div class="row">
+      <button type="button" class="primary" id="copy-token">Copy</button>
+      <button type="button" id="close-token">Done</button>
+    </div>
+  </dialog>
+</main>
+{{template "foot" .}}

@@ -16,6 +16,7 @@ import (
 	"notifyrelay/internal/config"
 	"notifyrelay/internal/metrics"
 	"notifyrelay/internal/router"
+	"notifyrelay/internal/store"
 )
 
 // Live is the part of the HTTP layer that can change while the service runs.
@@ -78,6 +79,9 @@ type Deps struct {
 	// Idempotency replays responses for repeated requests. When nil, the
 	// Idempotency-Key header is ignored.
 	Idempotency IdempotencyStore
+	// Keys holds the API keys created through the operator surface. When nil,
+	// only the keys named in the configuration file are accepted.
+	Keys store.APIKeys
 	// Metrics, when set, instruments the HTTP layer.
 	Metrics *metrics.Metrics
 
@@ -121,7 +125,7 @@ func NewHandler(d Deps) http.Handler {
 	}
 
 	r.Group(func(pr chi.Router) {
-		pr.Use(BearerAuth(d.Live))
+		pr.Use(BearerAuth(d.Live, d.Keys))
 
 		notify := &notifyHandler{
 			router:  d.Router,

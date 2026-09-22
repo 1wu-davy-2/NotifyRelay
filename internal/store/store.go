@@ -194,6 +194,84 @@ type Channels interface {
 	CountChannels(ctx context.Context) (int, error)
 }
 
+// APIKey is a credential a producer calls the notification API with.
+//
+// Only the digest is stored, so the plaintext exists exactly once: in the
+// response that created it. Nothing can recover it afterwards, including an
+// operator with the database open — which is the point, and also the reason
+// the create response says so.
+type APIKey struct {
+	ID     string
+	Name   string
+	KeyHash string
+	Enabled bool
+	// CreatedAt and LastUsedAt are set by the store.
+	CreatedAt time.Time
+	// LastUsedAt is nil until the key is first used.
+	LastUsedAt *time.Time
+}
+
+// APIKeys stores the producer credentials.
+type APIKeys interface {
+	// ListAPIKeys returns every key, newest first.
+	ListAPIKeys(ctx context.Context) ([]*APIKey, error)
+
+	// GetAPIKey returns one key, or nil when there is no such key.
+	GetAPIKey(ctx context.Context, id string) (*APIKey, error)
+
+	// PutAPIKey creates or replaces a key.
+	PutAPIKey(ctx context.Context, k *APIKey) error
+
+	// DeleteAPIKey removes a key, reporting whether it existed.
+	DeleteAPIKey(ctx context.Context, id string) (bool, error)
+
+	// FindAPIKeyByHash returns the enabled key with this digest, or nil.
+	//
+	// Lookup by digest rather than by comparing against every stored key: the
+	// digest is a preimage-resistant hash of the presented token, so indexing
+	// on it reveals nothing about the tokens, and the alternative is a
+	// full-table scan on the hot path of every notification.
+	FindAPIKeyByHash(ctx context.Context, keyHash string) (*APIKey, error)
+
+	// TouchAPIKey records that a key was used, at most once per interval.
+	//
+	// Rate-limited by the caller's timestamp rather than by the store: writing
+	// on every request would put a database write in front of every
+	// notification, which is a great deal of cost for a column nobody reads
+	// during an incident.
+	TouchAPIKey(ctx context.Context, id string, now time.Time, interval time.Duration) error
+}
+
+// AdminCredential is the operator's sign-in.
+//
+// It lives in the database rather than only in the configuration file so that a
+// deployment can be stood up without preparing a password hash first. A hash
+// configured in the file still works, and takes precedence — an operator who
+// wrote one down meant it.
+type AdminCredential struct {
+	Username     string
+	PasswordHash string
+	CreatedAt    time.Time
+}
+
+// AdminCredentials stores the operator's sign-in.
+type AdminCredentials interface {
+	// GetAdminCredential returns the stored credential, or nil when none has
+	// been created. Nil is what opens the first-run setup page, so a store
+	// error here must not be reported as "none".
+	GetAdminCredential(ctx context.Context) (*AdminCredential, error)
+
+	// CreateAdminCredential stores the first credential, reporting whether it
+	// was stored.
+	//
+	// False means one already exists. That is the whole mechanism by which the
+	// first-run page closes, and it is deliberately a conditional write rather
+	// than a check followed by a write: two people opening the setup page at
+	// the same moment would both pass the check, and whoever wrote second would
+	// silently take the deployment.
+	CreateAdminCredential(ctx context.Context, c *AdminCredential) (bool, error)
+}
+
 // Filter narrows a delivery query.
 type Filter struct {
 	Status    Status
@@ -344,6 +422,8 @@ type Store interface {
 	Channels
 	Meta
 	AdminAudit
+	APIKeys
+	AdminCredentials
 
 	// Ping reports whether the store is usable, for the readiness probe.
 	Ping(ctx context.Context) error

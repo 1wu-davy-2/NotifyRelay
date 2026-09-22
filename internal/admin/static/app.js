@@ -294,6 +294,31 @@
         .catch(function (err) { window.alert(err.message); });
     }
 
+    if (target.dataset.enableKey || target.dataset.disableKey) {
+      var enableId = target.dataset.enableKey || target.dataset.disableKey;
+      var turningOn = Boolean(target.dataset.enableKey);
+      request("POST", "/admin/api/keys/" + encodeURIComponent(enableId),
+              { enabled: turningOn })
+        .then(function () { window.location.reload(); })
+        .catch(function (err) { window.alert(err.message); });
+    }
+
+    if (target.dataset.deleteKey) {
+      var keyName = target.dataset.keyName;
+      if (!window.confirm("Delete the key " + keyName + "?\n\n" +
+                          "Anything still using it stops working immediately. " +
+                          "There is no way to restore it — the token itself was " +
+                          "never stored, so a replacement has to be created and " +
+                          "put wherever this one was.")) {
+        return;
+      }
+      request("DELETE", "/admin/api/keys/" + encodeURIComponent(target.dataset.deleteKey))
+        .then(function () {
+          window.location.href = "/admin/keys?ok=" + encodeURIComponent("Deleted " + keyName);
+        })
+        .catch(function (err) { window.alert(err.message); });
+    }
+
     if (target.dataset.replay) {
       var id = target.dataset.replay;
       if (!window.confirm("Replay delivery " + id + "?\n\n" +
@@ -308,6 +333,106 @@
         .catch(function (err) { window.alert(err.message); });
     }
   });
+
+  /* -------------------------------------------------------------- API keys */
+
+  var createKey = document.getElementById("create-key");
+  if (createKey) {
+    createKey.addEventListener("click", function () {
+      var input = document.getElementById("key-name");
+      var name = input.value.trim();
+      if (!name) {
+        window.alert("Give the key a name first — it is what the audit trail will show.");
+        return;
+      }
+
+      request("POST", "/admin/api/keys", { name: name })
+        .then(function (res) {
+          input.value = "";
+          // Deliberately no reload here. The token exists only in this response,
+          // and a reload is how it would be lost — the list is refreshed when
+          // the dialog closes instead.
+          showToken(res.token);
+        })
+        .catch(function (err) { window.alert(err.message); });
+    });
+  }
+
+  /* The token is shown in a dialog and never put in the URL, a log line or the
+   * page's own HTML: it exists in this variable and on the clipboard, and
+   * reloading the page discards it, which is the intended lifetime. */
+  var pendingToken = null;
+
+  function showToken(token) {
+    pendingToken = token;
+    var dialog = document.getElementById("token-dialog");
+    if (!dialog) {
+      // No dialog support: the token is still the thing the operator needs, so
+      // it goes somewhere they can read it rather than nowhere.
+      window.prompt("Copy this now — it is not shown again:", token);
+      return;
+    }
+    document.getElementById("token-value").textContent = token;
+    dialog.showModal();
+  }
+
+  var copyToken = document.getElementById("copy-token");
+  if (copyToken) {
+    copyToken.addEventListener("click", function () {
+      if (pendingToken) { copyText(pendingToken, copyToken); }
+    });
+  }
+
+  var closeToken = document.getElementById("close-token");
+  if (closeToken) {
+    closeToken.addEventListener("click", function () {
+      pendingToken = null;
+      var dialog = document.getElementById("token-dialog");
+      if (dialog) { dialog.close(); }
+      window.location.reload();
+    });
+  }
+
+  /* ------------------------------------------------------------ first run */
+
+  /* The setup form is not a state-changing request to an existing session —
+   * there is no session yet — so it does not go through request(), which
+   * attaches the CSRF header the server requires on everything else. This is
+   * the one POST that does not need it, because there is nothing to forge: the
+   * account it creates is the one every later request is checked against. */
+  var setupForm = document.getElementById("setup-form");
+  if (setupForm) {
+    setupForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+
+      var username = document.getElementById("username").value.trim();
+      var password = document.getElementById("password").value;
+      var confirm = document.getElementById("confirm").value;
+
+      if (password !== confirm) {
+        window.alert("The two passwords do not match.");
+        return;
+      }
+
+      fetch("/admin/api/setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ username: username, password: password })
+      }).then(function (res) {
+        return res.json().then(function (body) {
+          if (!res.ok) {
+            throw new Error(body.message || "the account could not be created");
+          }
+          return body;
+        });
+      }).then(function () {
+        window.location.href = "/admin/channels";
+      }).catch(function (err) {
+        window.alert(err.message);
+      });
+    });
+  }
 
   /* --------------------------------------------------------- API reference */
 

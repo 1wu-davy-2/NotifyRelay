@@ -65,43 +65,37 @@ what the message is and where it goes.
 
 ## Quick start
 
-Thirty seconds, assuming Docker:
+**One command.** No configuration file to write first, no keys to generate, no
+password hash to compute:
 
 ```bash
 git clone https://github.com/1wu-davy-2/NotifyRelay.git && cd NotifyRelay
-cp .env.example .env
-cp configs/notifyrelay.example.yaml configs/notifyrelay.yaml
-```
-
-Two values to fill in, and the generators for both are in the same image:
-
-```bash
-docker compose run --rm notifyrelay --gen-key               # -> NOTIFYRELAY_SECRET_KEY in .env
-docker compose run --rm notifyrelay --hash-key 'your-token' # -> auth.api_keys[0].key_hash in the config
-```
-
-Only the digest is stored; the token itself is never written down.
-
-Then add a channel. A webhook pointed at anything that echoes is enough for a
-first run:
-
-```yaml
-channels:
-  - name: oncall
-    type: webhook
-    enabled: true
-    config:
-      url: https://example.com/notify
-```
-
-> **This has to be done before the first `up`.** The `channels:` block seeds the
-> database once, on the first boot, and is never read again — which is what
-> stops a channel an operator deletes in the UI from reappearing after the next
-> restart. Afterwards, channels are managed through the operator UI.
-
-```bash
 docker compose up -d
 ```
+
+Open `http://localhost:8080/admin`. The first visit offers to create an
+administrator. After that, channels and API keys are added from the same place.
+
+None of the following is something you do by hand; it is listed so you know it
+happened:
+
+| | |
+|---|---|
+| **The two keys** | Generated into `keys/` in the data directory on first boot, mode 0600, read back on every boot after. |
+| **The administrator** | Nothing is pre-set. Whoever opens the UI first creates it, and that page closes permanently. |
+| **API keys** | Created on the **Keys** page. The plaintext is shown once. |
+| **Channels** | Added on the **Channels** page. |
+
+> **The window that comes with that.** Between the container starting and you
+> opening the UI, whoever reaches it first becomes the administrator. On an
+> internal network, done immediately, that window is small — and the startup log
+> says so explicitly. To remove it entirely, put `admin.password_hash` in a
+> configuration (generate one with
+> `docker compose run --rm notifyrelay --hash-password '...'`) and the page is
+> never offered.
+
+If 8080 is taken, set `NOTIFYRELAY_HTTP_PORT=18080` in `.env` — the compose file
+does not need editing.
 
 Confirm it is up. The image is distroless, so the probe is the binary itself:
 
@@ -109,7 +103,7 @@ Confirm it is up. The image is distroless, so the probe is the binary itself:
 docker compose exec notifyrelay /notifyrelay --healthcheck 127.0.0.1:8080
 ```
 
-Now send something:
+With a channel and an API key created in the UI, send something:
 
 ```bash
 curl -X POST http://127.0.0.1:8080/api/v1/notify \
@@ -124,7 +118,9 @@ curl -X POST http://127.0.0.1:8080/api/v1/notify \
       }'
 ```
 
-`$TOKEN` is the token whose digest you put in `auth.api_keys`.
+`$TOKEN` is the string shown when the key was created, starting `nr_`. **Only
+its digest is stored, so it cannot be shown again** — if it is lost, delete the
+key and make another.
 
 The response is `202` with a delivery id, because delivery is asynchronous by
 default:

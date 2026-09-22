@@ -1,7 +1,7 @@
 package admin
 
 import (
-	"crypto/subtle"
+	"context"
 	"log/slog"
 	"net"
 	"net/http"
@@ -36,7 +36,8 @@ func (h *handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.authenticate(req.Username, req.Password) {
+	actor, ok := h.authenticate(r.Context(), req.Username, req.Password)
+	if !ok {
 		h.limiter.fail(key)
 		h.log.Warn("admin: failed sign-in",
 			slog.String("remote", key),
@@ -49,7 +50,7 @@ func (h *handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := h.sessions.create(h.deps.Config.Username)
+	id, err := h.sessions.create(actor)
 	if err != nil {
 		h.log.Error("admin: could not create a session", slog.String("error", err.Error()))
 		writeError(w, http.StatusInternalServerError, "internal", "the session could not be created")
@@ -71,32 +72,39 @@ func (h *handler) login(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   int(h.deps.Config.SessionTTL.Std().Seconds()),
 	})
 
-	h.log.Info("admin: signed in", slog.String("actor", h.deps.Config.Username))
+	h.log.Info("admin: signed in", slog.String("actor", actor))
 	writeJSON(w, http.StatusOK, sessionResponse{
-		Actor:     h.deps.Config.Username,
+		Actor:     actor,
 		ExpiresIn: int(h.deps.Config.SessionTTL.Std().Seconds()),
 	})
 }
 
-// authenticate checks a username and password in constant time.
+// authenticate checks a username and password against either source.
 //
-// Both halves are compared with subtle.ConstantTimeCompare even though the
-// username is not a secret: a comparison that returns early on the first
+// Two sources, tried in order: the credential named in the configuration file,
+// and the administrator created through the first-run page. Both are supported
+// rather than one replacing the other, because a deployment that wrote a hash
+// into its configuration meant it, and should not find that a second account
+// created through the UI has quietly taken over.
+//
+// Each source compares both halves with subtle.ConstantTimeCompare even though
+// the username is not a secret: a comparison that returns early on the first
 // differing byte turns "guess the password" into "guess the password one byte
 // at a time", and the username is the part an attacker usually already knows.
-func (h *handler) authenticate(username, password string) bool {
-	wantUser := []byte(h.deps.Config.Username)
-	gotUser := []byte(username)
-
-	userOK := subtle.ConstantTimeCompare(gotUser, wantUser) == 1
-
-	// The password is always verified, even when the username is wrong, so the
-	// response time does not reveal whether the username was right. An unset
-	// hash verifies nothing, which is the correct behaviour for a deployment
-	// whose configuration failed to parse.
-	passwordOK := h.password.Verify(password)
-
-	return userOK && passwordOK
+// Within a source the password is verified even when the username is wrong, so
+// the response time does not reveal which half was right.
+//
+// Between sources the first match wins and the second is not consulted. That is
+// not a timing leak worth closing: a match means the caller is authenticated,
+// and the time taken to authenticate successfully is not a secret.
+//
+// The actor returned is the username of whichever source matched, so a session
+// carries the name the account actually has rather than the configured one.
+func (h *handler) authenticate(ctx context.Context, username, password string) (string, bool) {
+	if h.verifyConfigured(username, password) {
+		return h.deps.Config.Username, true
+	}
+	return h.verifyStored(ctx, username, password)
 }
 
 // logout ends the session.

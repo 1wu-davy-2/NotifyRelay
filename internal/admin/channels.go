@@ -20,10 +20,10 @@ import (
 // by SecretsSet, because a form has to be able to say "a password is configured"
 // without the browser ever holding the password.
 type channelView struct {
-	Name    string         `json:"name"`
-	Type    string         `json:"type"`
-	Enabled bool           `json:"enabled"`
-	Config  map[string]any `json:"config"`
+	Name    string             `json:"name"`
+	Type    string             `json:"type"`
+	Enabled bool               `json:"enabled"`
+	Config  map[string]any     `json:"config"`
 	Quota   config.QuotaConfig `json:"quota"`
 	// SecretsSet names the private parameters that currently have a value.
 	SecretsSet []string `json:"secrets_set,omitempty"`

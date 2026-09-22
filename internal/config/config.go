@@ -391,9 +391,12 @@ func (c *Config) Validate() error {
 			c.Timeouts.Handler, c.Timeouts.Deliver))
 	}
 
-	if len(c.Auth.APIKeys) == 0 {
-		errs = append(errs, errors.New("auth.api_keys must define at least one key"))
-	}
+	// Zero keys is no longer a configuration error: keys can be created through
+	// the operator surface and live in the database, so a deployment with none
+	// in the file is a deployment that has not created any yet. The service
+	// warns at startup when neither source has one, which is where the operator
+	// finds out — rather than here, where the answer would be "edit a file and
+	// restart" for a problem the UI can solve.
 	seenKeys := make(map[string]bool, len(c.Auth.APIKeys))
 	for i, k := range c.Auth.APIKeys {
 		where := fmt.Sprintf("auth.api_keys[%d]", i)
@@ -448,35 +451,35 @@ func (c *Config) Validate() error {
 	}
 
 	// The admin surface is the one place a mistake here turns into a remote
-	// takeover of the notification system, so a half-configured admin block is
-	// refused rather than started with a hole in it.
+	// takeover of the notification system, so anything that *is* configured has
+	// to be right.
+	//
+	// What is no longer required is that anything be configured at all. A
+	// missing username, password hash or session key is the first-run state:
+	// the service starts, serves the create-an-administrator page, and closes
+	// that page forever once an account exists. Requiring a password hash in
+	// the file was what made "generate a hash on a workstation and copy it in"
+	// unavoidable, which is the friction that leads to one secret reused
+	// everywhere.
+	//
+	// The session key is resolved separately, in ResolveKeys: it can be
+	// generated, so the check for it is not "is it set" but "does it differ
+	// from secret_key", and that can only be answered once both are resolved.
 	if c.Admin.Enabled {
-		if strings.TrimSpace(c.Admin.Username) == "" {
-			errs = append(errs, errors.New("admin.username is required when admin is enabled"))
-		}
-		if strings.TrimSpace(c.Admin.PasswordHash) == "" {
-			errs = append(errs, errors.New(
-				"admin.password_hash is required when admin is enabled "+
-					"(generate one with `notifyrelay --hash-password`)"))
-		} else if _, err := auth.ParsePasswordHash(c.Admin.PasswordHash); err != nil {
-			errs = append(errs, fmt.Errorf("admin.password_hash: %w", err))
-		}
-		if strings.TrimSpace(c.Admin.SessionKey) == "" {
-			errs = append(errs, errors.New(
-				"admin.session_key is required when admin is enabled "+
-					"(write `session_key: !env NOTIFYRELAY_SESSION_KEY`)"))
+		if h := strings.TrimSpace(c.Admin.PasswordHash); h != "" {
+			if _, err := auth.ParsePasswordHash(h); err != nil {
+				errs = append(errs, fmt.Errorf("admin.password_hash: %w", err))
+			}
+			// A hash without a username cannot be signed in with, and the
+			// operator would find that out at the sign-in form rather than at
+			// startup.
+			if strings.TrimSpace(c.Admin.Username) == "" {
+				errs = append(errs, errors.New(
+					"admin.username is required when admin.password_hash is set"))
+			}
 		}
 		if c.Admin.SessionTTL <= 0 {
 			errs = append(errs, errors.New("admin.session_ttl must be greater than zero"))
-		}
-
-		// Two purposes, two keys. Deriving both from one value is how a
-		// weakness in whichever use is weaker becomes a weakness in both, and
-		// these two have nothing in common except being secret.
-		if c.SecretKey != "" && c.Admin.SessionKey == c.SecretKey {
-			errs = append(errs, errors.New(
-				"admin.session_key must not be the same value as secret_key: "+
-					"one key must not serve two purposes"))
 		}
 	}
 
