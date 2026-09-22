@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# The token whose sha256 digest is in auth.api_keys — not the digest itself.
+: "${NOTIFYRELAY_TOKEN:?set NOTIFYRELAY_TOKEN first}"
+
+# --fail-with-body makes a 4xx/5xx exit non-zero while still printing the
+# error body, which is where the error code you want to branch on lives.
+# Note there is no -k: the token travels in a header, so the connection has to
+# be verified.
+curl --fail-with-body --silent --show-error \
+  --max-time 10 \
+  -X POST '{{BASE_URL}}/api/v1/notify' \
+  -H "Authorization: Bearer ${NOTIFYRELAY_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: db-03-lag-$(date -u +%Y%m%dT%H%M%S)" \
+  -d '{
+        "targets": ["oncall"],
+        "title": "Replication lag on db-03",
+        "body": "**lag**: 12s",
+        "format": "markdown",
+        "type": "warning"
+      }'
+
+# A repeat with the same Idempotency-Key replays the first response byte for
+# byte and adds `Idempotent-Replay: true`; the channel still sees one message.
+# Drop the header if duplicates are acceptable.
+
+# ---------------------------------------------------------------- the result
+
+# The POST above answers 202 with a delivery id. Ask what happened to it:
+#
+#   curl --fail-with-body --silent --show-error \
+#     -H "Authorization: Bearer ${NOTIFYRELAY_TOKEN}" \
+#     '{{BASE_URL}}/api/v1/messages/<delivery-id>'
+#
+# Or list what is stuck, which is the more useful query in practice:
+#
+#   curl --fail-with-body --silent --show-error \
+#     -H "Authorization: Bearer ${NOTIFYRELAY_TOKEN}" \
+#     '{{BASE_URL}}/api/v1/messages?status=failed&limit=50'

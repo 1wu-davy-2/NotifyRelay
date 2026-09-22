@@ -1,0 +1,63 @@
+// .NET 5+ (System.Net.Http.Json).
+//
+// HttpClient validates the server certificate by default. Do not add a
+// HttpClientHandler whose ServerCertificateCustomValidationCallback returns
+// true, and do not set ServicePointManager.ServerCertificateValidationCallback
+// — both disable the check globally for the process, and the bearer token
+// travels in the request headers.
+using System;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Threading.Tasks;
+
+internal static class Program
+{
+    private const string BaseUrl = "{{BASE_URL}}";
+
+    private static async Task<int> Main()
+    {
+        string? token = Environment.GetEnvironmentVariable("NOTIFYRELAY_TOKEN");
+        if (string.IsNullOrEmpty(token))
+        {
+            Console.Error.WriteLine("set NOTIFYRELAY_TOKEN first");
+            return 1;
+        }
+
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        // A repeat with the same key replays the first response and the channel
+        // still sees one message. Omit it if duplicates are acceptable.
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "db-03-lag-20260922T091400");
+
+        // ----------------------------------------------------------- send one
+
+        var payload = new
+        {
+            targets = new[] { "oncall" },
+            title = "Replication lag on db-03",
+            body = "**lag**: 12s",
+            format = "markdown",
+            type = "warning",
+        };
+
+        using var response = await client.PostAsJsonAsync(BaseUrl + "/api/v1/notify", payload);
+        string body = await response.Content.ReadAsStringAsync();
+        Console.WriteLine($"{(int)response.StatusCode} {body}");
+
+        // 202 means queued. Add sync = true to the payload instead and the call
+        // blocks until every target has an outcome, returning 200 with a
+        // per-target result.
+
+        // --------------------------------------------------------- the result
+
+        const string deliveryId = "282d67a1b3c4e5f6"; // from the response above
+
+        using var detail = await client.GetAsync(BaseUrl + "/api/v1/messages/" + deliveryId);
+        Console.WriteLine($"{(int)detail.StatusCode} {await detail.Content.ReadAsStringAsync()}");
+
+        // A 4xx carries {"error": "...", "message": "..."}. Branch on `error`,
+        // never on `message`.
+        return 0;
+    }
+}

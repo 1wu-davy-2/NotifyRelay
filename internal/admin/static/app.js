@@ -309,6 +309,98 @@
     }
   });
 
+  /* --------------------------------------------------------- API reference */
+
+  /* The samples are all rendered and all visible; this only decides which one
+   * to show once scripting is known to work. See the note in app.css. */
+  var samples = document.getElementById("samples");
+  if (samples) {
+    var TAB_KEY = "notifyrelay.apiSample";
+
+    function showSample(id) {
+      var panels = samples.querySelectorAll("[data-sample]");
+      for (var i = 0; i < panels.length; i++) {
+        panels[i].classList.toggle("on", panels[i].dataset.sample === id);
+      }
+      var tabs = samples.querySelectorAll("[data-sample-tab]");
+      for (var j = 0; j < tabs.length; j++) {
+        tabs[j].classList.toggle("on", tabs[j].dataset.sampleTab === id);
+      }
+    }
+
+    /* A remembered tab is restored only if it still exists — a sample removed
+     * from a later build should not leave the page with nothing showing. */
+    var remembered = null;
+    try { remembered = window.localStorage.getItem(TAB_KEY); } catch (e) { /* private mode */ }
+    if (!remembered || !samples.querySelector('[data-sample="' + remembered + '"]')) {
+      var first = samples.querySelector("[data-sample]");
+      remembered = first ? first.dataset.sample : null;
+    }
+
+    samples.classList.add("ready");
+    if (remembered) { showSample(remembered); }
+
+    samples.addEventListener("click", function (event) {
+      var target = event.target;
+      if (!target.dataset) { return; }
+
+      if (target.dataset.sampleTab) {
+        showSample(target.dataset.sampleTab);
+        try { window.localStorage.setItem(TAB_KEY, target.dataset.sampleTab); } catch (e) { /* ignore */ }
+        return;
+      }
+
+      if (target.dataset.copy) {
+        var panel = samples.querySelector('[data-sample="' + target.dataset.copy + '"]');
+        var code = panel ? panel.querySelector("code") : null;
+        if (code) { copyText(code.textContent, target); }
+      }
+    });
+  }
+
+  /* copyText puts text on the clipboard and flashes the button.
+   *
+   * navigator.clipboard is only defined in a secure context, and this UI is
+   * commonly reached over plain HTTP on an internal address — which is exactly
+   * the deployment the API page is documenting. So the modern API is tried
+   * first and the old selection trick is the fallback; without it the button
+   * would silently do nothing on the addresses it is most likely to be used
+   * from. */
+  function copyText(text, button) {
+    function done() {
+      var was = button.textContent;
+      button.classList.add("done");
+      button.textContent = "✓";
+      window.setTimeout(function () {
+        button.classList.remove("done");
+        button.textContent = was;
+      }, 1200);
+    }
+
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(done, function () { legacyCopy(text, done); });
+      return;
+    }
+    legacyCopy(text, done);
+  }
+
+  function legacyCopy(text, done) {
+    var area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.top = "-1000px";
+    document.body.appendChild(area);
+    area.select();
+    try {
+      document.execCommand("copy");
+      done();
+    } catch (e) {
+      window.prompt("Copy with Ctrl+C / Cmd+C:", text);
+    }
+    document.body.removeChild(area);
+  }
+
   /* -------------------------------------------------------------- catalog */
 
   /* The catalogue is embedded so the form can resolve a parameter's type

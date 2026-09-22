@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Send a notification through NotifyRelay, then read the result.
+
+Standard library only. urllib verifies the certificate chain by default and
+must be left that way: the bearer token travels in the request headers, so an
+unverified connection hands it to whoever is in the middle. Do not reach for
+ssl._create_unverified_context() or an unverified SSLContext here.
+"""
+
+import json
+import os
+import urllib.error
+import urllib.request
+
+BASE_URL = "{{BASE_URL}}"
+TOKEN = os.environ["NOTIFYRELAY_TOKEN"]
+
+
+def call(method, path, payload=None, idempotency_key=None):
+    """One request. Raises on 4xx/5xx, with the error body attached."""
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+
+    req = urllib.request.Request(BASE_URL + path, data=data, method=method)
+    req.add_header("Authorization", "Bearer " + TOKEN)
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    if idempotency_key:
+        req.add_header("Idempotency-Key", idempotency_key)
+
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status, json.load(resp)
+    except urllib.error.HTTPError as err:
+        # The body is the useful part: {"error": "...", "message": "..."}.
+        # Branch on `error`, never on `message` — the message is for humans.
+        raise RuntimeError(f"{err.code} {err.read().decode('utf-8', 'replace')}") from err
+
+
+# ------------------------------------------------------------------- send one
+
+status, body = call(
+    "POST",
+    "/api/v1/notify",
+    {
+        "targets": ["oncall"],
+        "title": "Replication lag on db-03",
+        "body": "**lag**: 12s",
+        "format": "markdown",
+        "type": "warning",
+    },
+    # A repeat with the same key replays the first response and the channel
+    # still sees one message. Omit it if duplicates are acceptable.
+    idempotency_key="db-03-lag-20260922T091400",
+)
+
+print(status, json.dumps(body, indent=2, ensure_ascii=False))
+
+# 202 means queued. Add "sync": True to the payload instead and the call blocks
+# until every target has an outcome, returning 200 with a per-target result.
+
+# --------------------------------------------------------------- the result
+
+delivery_id = body["deliveries"][0]["id"] if body.get("deliveries") else "282d67a1b3c4e5f6"
+
+status, detail = call("GET", "/api/v1/messages/" + delivery_id)
+print(status, json.dumps(detail, indent=2, ensure_ascii=False))
+
+# Or list what is stuck, which is the more useful query in practice:
+#
+#   status, stuck = call("GET", "/api/v1/messages?status=failed&limit=50")

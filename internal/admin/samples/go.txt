@@ -1,0 +1,100 @@
+// Package main sends a notification through NotifyRelay.
+//
+// Standard library only. The default transport verifies the certificate chain;
+// do not replace it with one that does not — the bearer token is in the
+// request headers, so an unverified connection hands it to whoever is in the
+// middle.
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"time"
+)
+
+const baseURL = "{{BASE_URL}}"
+
+func main() {
+	token := os.Getenv("NOTIFYRELAY_TOKEN")
+	if token == "" {
+		fmt.Fprintln(os.Stderr, "set NOTIFYRELAY_TOKEN first")
+		os.Exit(1)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	// ------------------------------------------------------------- send one
+
+	payload, err := json.Marshal(map[string]any{
+		"targets": []string{"oncall"},
+		"title":   "Replication lag on db-03",
+		"body":    "**lag**: 12s",
+		"format":  "markdown",
+		"type":    "warning",
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/api/v1/notify", bytes.NewReader(payload))
+	if err != nil {
+		panic(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	// A repeat with the same key replays the first response and the channel
+	// still sees one message. Drop this line if duplicates are acceptable.
+	req.Header.Set("Idempotency-Key", "db-03-lag-"+time.Now().UTC().Format("20060102T150405"))
+
+	resp, err := client.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("%d %s\n%s\n", resp.StatusCode, http.StatusText(resp.StatusCode), body)
+
+	// 202 means queued. The response carries one entry per target:
+	//
+	//   {"request_id":"...","accepted":true,
+	//    "deliveries":[{"id":"282d67a1b3c4e5f6","target":"oncall", ...}]}
+	//
+	// Add "sync": true to the payload instead and the call blocks until every
+	// target has an outcome, returning 200 with a per-target result. Never a
+	// single overall status — collapsing a fan-out into one word is how a
+	// partial failure gets hidden.
+
+	// ----------------------------------------------------------- the result
+
+	id := "282d67a1b3c4e5f6" // from the response above, or the operator UI
+	get, err := http.NewRequest(http.MethodGet, baseURL+"/api/v1/messages/"+id, nil)
+	if err != nil {
+		panic(err)
+	}
+	get.Header.Set("Authorization", "Bearer "+token)
+
+	detail, err := client.Do(get)
+	if err != nil {
+		panic(err)
+	}
+	defer detail.Body.Close()
+
+	attempts, err := io.ReadAll(detail.Body)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("%d\n%s\n", detail.StatusCode, attempts)
+
+	// The attempt history is where the diagnosis is. Each attempt carries a
+	// class; NOT_ATTEMPTED with a skip_reason means the channel was never
+	// called at all, which is a different problem from a channel that was
+	// called and refused.
+}

@@ -1,0 +1,214 @@
+{{template "head" .}}
+{{template "nav" .}}
+<main class="wide">
+  {{template "flash" .}}
+
+  <div class="page-head">
+    <h1>{{if .Zh}}API 参考{{else}}API reference{{end}}</h1>
+    <div class="lang-switch">
+      <a href="?lang=zh" {{if .Zh}}class="on"{{end}}>中文</a>
+      <span class="sep">|</span>
+      <a href="?lang=en" {{if not .Zh}}class="on"{{end}}>EN</a>
+    </div>
+  </div>
+
+  {{if .Zh}}
+  <p class="muted">
+    上游只需接入一次。下面是发一条通知、以及查它到底送出去了没有的全部接口。
+    设计理由见项目 README，逐字段的完整参考见 <code>docs/07-api.md</code>。
+  </p>
+  {{else}}
+  <p class="muted">
+    Producers integrate once. Below is the whole surface for sending a
+    notification and for finding out whether it actually arrived. For the
+    reasoning behind the design see the project README; for the exhaustive
+    field-by-field reference see <code>docs/07-api.md</code>.
+  </p>
+  {{end}}
+
+  <section class="creds">
+    <dl>
+      <dt>{{if .Zh}}服务地址{{else}}Base URL{{end}}</dt>
+      <dd><code id="base-url">{{.BaseURL}}</code></dd>
+
+      <dt>{{if .Zh}}鉴权{{else}}Authentication{{end}}</dt>
+      <dd><code>Authorization: Bearer &lt;token&gt;</code></dd>
+    </dl>
+
+    {{if .Zh}}
+    <p class="muted small">
+      这里的地址取自你当前访问后台用的地址。它不一定就是上游该用的地址——
+      经过反向代理、或者从别的网段访问时会不一样，以实际能连通的那个为准。
+    </p>
+    {{else}}
+    <p class="muted small">
+      This address is the one you reached this page on. It is not necessarily
+      the one a producer should use — behind a proxy, or from another network,
+      it will differ. Use whichever one actually connects.
+    </p>
+    {{end}}
+
+    {{if .Zh}}
+    <p class="muted small">
+      token 的明文不存在任何地方，<code>auth.api_keys</code> 里只有它的 sha256 摘要，
+      所以这里也没法替你填。用 <code>notifyrelay --hash-key '&lt;token&gt;'</code> 生成摘要，
+      明文自己保管。
+    </p>
+    {{else}}
+    <p class="muted small">
+      The plaintext token is stored nowhere — <code>auth.api_keys</code> holds only
+      its sha256 digest, so this page cannot fill it in for you. Generate a digest
+      with <code>notifyrelay --hash-key '&lt;token&gt;'</code> and keep the plaintext yourself.
+    </p>
+    {{end}}
+  </section>
+
+  {{if not .Secure}}
+  <p class="flash bad">
+    {{if .Zh}}
+      你正在用 <strong>明文 HTTP</strong> 访问这个后台。下面示例里的 token 会以明文经过网络，
+      任何能看到这条链路的人都能拿到它，并以此发送通知。生产环境请让 <code>server.addr</code>
+      只监听内网，并在前面放一层 TLS。
+    {{else}}
+      You are reaching this page over <strong>plain HTTP</strong>. The token in the
+      samples below would cross the network in the clear, and anyone who can see
+      that traffic can send notifications with it. In production, bind
+      <code>server.addr</code> to an internal address and terminate TLS in front
+      of it.
+    {{end}}
+  </p>
+  {{end}}
+
+  <h2>{{if .Zh}}调用示例{{else}}Worked examples{{end}}</h2>
+
+  {{if .Zh}}
+  <p class="muted">
+    每个示例都是完整的：发一条通知，然后按 ID 查它的结果。全部默认校验证书——
+    <strong>token 走的是请求头，关掉校验等于把它交给链路上的任何人</strong>，
+    所以这里没有任何一个示例提供关闭校验的写法。
+  </p>
+  {{else}}
+  <p class="muted">
+    Each one is complete: send a notification, then read the result back by id.
+    All of them verify the certificate — <strong>the token travels in a request
+    header, so turning verification off hands it to anyone on the path</strong> —
+    which is why not one of them shows you how.
+  </p>
+  {{end}}
+
+  <div class="samples" id="samples">
+    <div class="tabs" role="tablist">
+      {{range $i, $s := .Samples}}
+      <button type="button" class="tab{{if eq $i 0}} on{{end}}"
+              data-sample-tab="{{$s.ID}}" role="tab">{{$s.Label}}</button>
+      {{end}}
+    </div>
+
+    {{range $i, $s := .Samples}}
+    <div class="panel{{if eq $i 0}} on{{end}}" data-sample="{{$s.ID}}">
+      <div class="panel-head">
+        <span class="muted small">{{$s.Note}}</span>
+        <span class="spacer"></span>
+        <button type="button" class="copy-btn" data-copy="{{$s.ID}}">
+          {{if $.Zh}}复制{{else}}Copy{{end}}
+        </button>
+      </div>
+      <pre><code>{{$s.Body}}</code></pre>
+    </div>
+    {{end}}
+  </div>
+
+  <h2>{{if .Zh}}端点{{else}}Endpoints{{end}}</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>{{if .Zh}}方法{{else}}Method{{end}}</th>
+        <th>{{if .Zh}}路径{{else}}Path{{end}}</th>
+        <th>{{if .Zh}}鉴权{{else}}Auth{{end}}</th>
+        <th>{{if .Zh}}说明{{else}}Purpose{{end}}</th>
+      </tr>
+    </thead>
+    <tbody>
+    {{range .Endpoints}}
+      <tr>
+        <td><code>{{.Method}}</code></td>
+        <td><code>{{.Path}}</code></td>
+        <td>{{if eq .Auth "none"}}<span class="muted">{{if $.Zh}}无{{else}}none{{end}}</span>{{else}}<code>{{.Auth}}</code>{{end}}</td>
+        <td class="wrap">{{if $.Zh}}{{.Zh}}{{else}}{{.En}}{{end}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+
+  <h2>{{if .Zh}}错误码{{else}}Error codes{{end}}</h2>
+
+  {{if .Zh}}
+  <p class="muted">
+    错误体固定是 <code>{"error": "...", "message": "..."}</code>。
+    <strong>按 <code>error</code> 分支，不要按 <code>message</code></strong>——
+    后者是写给人看的，措辞会变。
+  </p>
+  {{else}}
+  <p class="muted">
+    Every error body is <code>{"error": "...", "message": "..."}</code>.
+    <strong>Branch on <code>error</code>, never on <code>message</code></strong> —
+    the latter is written for a human and its wording will change.
+  </p>
+  {{end}}
+
+  <table>
+    <thead>
+      <tr>
+        <th><code>error</code></th>
+        <th>{{if .Zh}}状态码{{else}}Status{{end}}</th>
+        <th>{{if .Zh}}含义{{else}}Meaning{{end}}</th>
+      </tr>
+    </thead>
+    <tbody>
+    {{range .Errors}}
+      <tr>
+        <td><code>{{.Code}}</code></td>
+        <td>{{.Status}}</td>
+        <td class="wrap">{{if $.Zh}}{{.Zh}}{{else}}{{.En}}{{end}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+
+  <h2>{{if .Zh}}两个容易踩的地方{{else}}Two things that catch people out{{end}}</h2>
+
+  {{if .Zh}}
+  <ul class="muted">
+    <li>
+      <strong><code>class</code> 有两种大小写。</strong>
+      <code>/api/v1/notify</code> 的 <code>results[].status</code> 是小写
+      （<code>sent</code>、<code>transient</code>…），尝试历史里的 <code>class</code>
+      是大写（<code>SENT</code>、<code>TRANSIENT</code>…）。同一个枚举，两个拼法。
+    </li>
+    <li>
+      <strong>看到 <code>NOT_ATTEMPTED</code> 不等于通道坏了。</strong>
+      它表示通道<em>根本没被调用</em>——被熔断、被配额或被限流挡下了。
+      具体是哪种看 <code>skip_reason</code>。这与「试过了但连不上」
+      （<code>CONNECT_ERROR</code>）是两回事，处理方式也不同。
+    </li>
+  </ul>
+  {{else}}
+  <ul class="muted">
+    <li>
+      <strong><code>class</code> has two spellings.</strong>
+      <code>results[].status</code> from <code>/api/v1/notify</code> is lowercase
+      (<code>sent</code>, <code>transient</code>…); the <code>class</code> in an
+      attempt history is uppercase (<code>SENT</code>, <code>TRANSIENT</code>…).
+      The same enum, decided by which endpoint you are on.
+    </li>
+    <li>
+      <strong><code>NOT_ATTEMPTED</code> does not mean the channel is broken.</strong>
+      It means the channel was <em>never called</em> — held back by an open breaker,
+      a spent allowance or a rate limit. <code>skip_reason</code> says which. That is
+      a different problem from <code>CONNECT_ERROR</code>, where the call was made
+      and did not get there, and it is fixed differently.
+    </li>
+  </ul>
+  {{end}}
+</main>
+{{template "foot" .}}

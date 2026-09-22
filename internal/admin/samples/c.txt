@@ -1,0 +1,106 @@
+/* Build:  cc notify.c -o notify -lcurl
+ *
+ * There is no HTTP client in the C standard library, so this uses libcurl —
+ * the one most platforms already have. On Debian/Ubuntu it is
+ * libcurl4-openssl-dev; on Windows, libcurl from vcpkg or curl-for-win.
+ *
+ * libcurl verifies the certificate chain by default. Do not add
+ * CURLOPT_SSL_VERIFYPEER(0L) or CURLOPT_SSL_VERIFYHOST(0L): that is the single
+ * most common way a client leaks a bearer token, and the token here travels in
+ * the request headers.
+ */
+#include <curl/curl.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#define BASE_URL "{{BASE_URL}}"
+
+/* Counts the response body and drops it. A GET's body is not needed here; a
+ * real client would append it to a buffer instead. */
+static size_t discard(char *ptr, size_t size, size_t nmemb, void *userdata) {
+    (void)ptr;
+    (void)userdata;
+    return size * nmemb;
+}
+
+/* Runs one request and returns the HTTP status, or -1 if it never got there.
+ *
+ * The distinction matters: -1 is CONNECT_ERROR — the peer was never reached,
+ * so the delivery was not charged against the channel's allowance. An HTTP
+ * status means the endpoint answered, whatever it said. */
+static long call(CURL *curl, const char *method, const char *path,
+                 const char *auth, const char *body) {
+    char url[1024];
+    snprintf(url, sizeof url, "%s%s", BASE_URL, path);
+
+    struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, auth);
+    if (body != NULL) {
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        /* A repeat with the same key replays the first response and the
+         * channel still sees one message. */
+        headers = curl_slist_append(headers, "Idempotency-Key: db-03-lag-20260922T091400");
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body); /* NULL for a GET */
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, discard);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, NULL);
+
+    long status = -1;
+    CURLcode rc = curl_easy_perform(curl);
+    if (rc == CURLE_OK) {
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+    } else {
+        fprintf(stderr, "request failed: %s\n", curl_easy_strerror(rc));
+    }
+
+    curl_slist_free_all(headers);
+    return status;
+}
+
+int main(void) {
+    const char *token = getenv("NOTIFYRELAY_TOKEN");
+    if (token == NULL || token[0] == '\0') {
+        fprintf(stderr, "set NOTIFYRELAY_TOKEN first\n");
+        return 1;
+    }
+
+    char auth[512];
+    snprintf(auth, sizeof auth, "Authorization: Bearer %s", token);
+
+    const char *payload =
+        "{"
+        "\"targets\":[\"oncall\"],"
+        "\"title\":\"Replication lag on db-03\","
+        "\"body\":\"**lag**: 12s\","
+        "\"format\":\"markdown\","
+        "\"type\":\"warning\""
+        "}";
+
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    CURL *curl = curl_easy_init();
+    if (curl == NULL) {
+        fprintf(stderr, "curl_easy_init failed\n");
+        curl_global_cleanup();
+        return 1;
+    }
+
+    long status = call(curl, "POST", "/api/v1/notify", auth, payload);
+    printf("notify -> %ld\n", status);
+    /* 202 means queued. The body carries one delivery id per target; add
+     * "sync":true to the payload to block until every target has an outcome
+     * instead. */
+
+    /* ---------------------------------------------------------- the result */
+
+    status = call(curl, "GET", "/api/v1/messages/282d67a1b3c4e5f6", auth, NULL);
+    printf("status -> %ld\n", status);
+
+    curl_easy_cleanup(curl);
+    curl_global_cleanup();
+    return 0;
+}

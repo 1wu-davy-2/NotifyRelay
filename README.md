@@ -185,6 +185,10 @@ ops.team.warning@relay.local   -> 通道 "ops.team"，级别 warning
 完整参考——每个端点（含管理 API）、每个字段、状态码与错误码——见
 [`docs/07-api.md`](docs/07-api.md)。
 
+后台里还有一份**可以直接复制**的版本：登录后点导航栏的 **API**。同样的端点与错误码，
+外加 curl / Go / Python / Java / C# / C / C++ 七种语言的完整调用示例，
+服务地址按你当前访问的地址自动填好，中英可切换。
+
 ---
 
 ## 核心设计

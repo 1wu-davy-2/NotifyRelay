@@ -1,0 +1,75 @@
+// Java 11+, java.net.http. No third-party dependency.
+//
+// HttpClient verifies the certificate chain by default and offers no switch to
+// turn it off — which is the right shape for a client whose credential is a
+// bearer token in a header. Do not build a custom SSLContext that trusts
+// everything to work around a certificate problem; fix the certificate.
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+
+public final class Notify {
+
+    private static final String BASE_URL = "{{BASE_URL}}";
+
+    public static void main(String[] args) throws Exception {
+        String token = System.getenv("NOTIFYRELAY_TOKEN");
+        if (token == null || token.isEmpty()) {
+            System.err.println("set NOTIFYRELAY_TOKEN first");
+            System.exit(1);
+        }
+
+        HttpClient client = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .build();
+
+        // --------------------------------------------------------- send one
+
+        String payload = """
+                {
+                  "targets": ["oncall"],
+                  "title": "Replication lag on db-03",
+                  "body": "**lag**: 12s",
+                  "format": "markdown",
+                  "type": "warning"
+                }
+                """;
+
+        HttpRequest post = HttpRequest.newBuilder()
+                .uri(URI.create(BASE_URL + "/api/v1/notify"))
+                .timeout(Duration.ofSeconds(10))
+                .header("Authorization", "Bearer " + token)
+                .header("Content-Type", "application/json")
+                // A repeat with the same key replays the first response and the
+                // channel still sees one message. Omit it if duplicates are fine.
+                .header("Idempotency-Key", "db-03-lag-20260922T091400")
+                .POST(HttpRequest.BodyPublishers.ofString(payload))
+                .build();
+
+        HttpResponse<String> response = client.send(post, HttpResponse.BodyHandlers.ofString());
+        System.out.println(response.statusCode() + " " + response.body());
+
+        // 202 means queued. Add "sync": true to the payload instead and the call
+        // blocks until every target has an outcome, returning 200 with a
+        // per-target result.
+
+        // ------------------------------------------------------- the result
+
+        String deliveryId = "282d67a1b3c4e5f6"; // from the response above
+
+        HttpRequest get = HttpRequest.newBuilder()
+                .uri(URI.create(BASE_URL + "/api/v1/messages/" + deliveryId))
+                .timeout(Duration.ofSeconds(10))
+                .header("Authorization", "Bearer " + token)
+                .GET()
+                .build();
+
+        HttpResponse<String> detail = client.send(get, HttpResponse.BodyHandlers.ofString());
+        System.out.println(detail.statusCode() + " " + detail.body());
+
+        // A 4xx carries {"error": "...", "message": "..."}. Branch on `error`,
+        // never on `message` — the message is written for a human and may change.
+    }
+}

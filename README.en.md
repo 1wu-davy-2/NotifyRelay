@@ -196,6 +196,11 @@ sending MTA retries on its own schedule, permanent becomes 5xx.
 The full reference — every endpoint including the operator API, every field,
 status code and error code — is [`docs/07-api.md`](docs/07-api.md) (Chinese).
 
+There is also a copyable version inside the operator UI, under **API** in the
+nav: the same endpoints and error codes, plus complete worked examples in curl,
+Go, Python, Java, C#, C and C++, with the base URL filled in from the address
+you reached the page on. Chinese and English.
+
 ---
 
 ## Core design

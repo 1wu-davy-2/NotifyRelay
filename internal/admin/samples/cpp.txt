@@ -1,0 +1,90 @@
+// Build:  c++ -std=c++17 notify.cpp -o notify -lssl -lcrypto -lpthread
+//         with CPPHTTPLIB_OPENSSL_SUPPORT defined, and httplib.h from
+//         https://github.com/yhirose/cpp-httplib on the include path.
+//
+// cpp-httplib is header-only, which is why it is used here rather than libcurl:
+// the same job in the C API is three times the code. If you already link
+// libcurl, the C sample next door is the shorter path.
+//
+// With OPENSSL_SUPPORT, cpp-httplib verifies the certificate chain by default.
+// Do not call cli.enable_server_certificate_verification(false): the bearer
+// token travels in the request headers.
+#include <httplib.h>
+
+#include <cstdlib>
+#include <iostream>
+#include <string>
+
+namespace {
+
+constexpr const char* kBaseUrl = "{{BASE_URL}}";
+
+// One client, reused. Constructed from the base URL, so the path passed to
+// Post/Get is the part after the host.
+httplib::Client make_client() {
+    httplib::Client cli(kBaseUrl);
+    cli.set_connection_timeout(10);
+    cli.set_read_timeout(10);
+    cli.set_follow_location(false);
+    return cli;
+}
+
+}  // namespace
+
+int main() {
+    const char* token = std::getenv("NOTIFYRELAY_TOKEN");
+    if (token == nullptr || *token == '\0') {
+        std::cerr << "set NOTIFYRELAY_TOKEN first\n";
+        return 1;
+    }
+
+    const httplib::Headers headers = {
+        {"Authorization", std::string("Bearer ") + token},
+        // A repeat with the same key replays the first response and the
+        // channel still sees one message.
+        {"Idempotency-Key", "db-03-lag-20260922T091400"},
+    };
+
+    auto cli = make_client();
+
+    // ------------------------------------------------------------- send one
+
+    // A raw string literal, so the JSON needs no escaping. The body is
+    // markdown because the caller says so — the service does not guess, and
+    // each channel converts it to its own dialect.
+    const std::string payload = R"({
+  "targets": ["oncall"],
+  "title": "Replication lag on db-03",
+  "body": "**lag**: 12s",
+  "format": "markdown",
+  "type": "warning"
+})";
+
+    auto res = cli.Post("/api/v1/notify", headers, payload, "application/json");
+    if (!res) {
+        // No HTTP status at all: the peer was never reached, which is a
+        // different failure from being refused.
+        std::cerr << "request failed: error " << static_cast<int>(res.error()) << "\n";
+        return 1;
+    }
+    std::cout << res->status << " " << res->body << "\n";
+
+    // 202 means queued. Add "sync": true to the payload and the call blocks
+    // until every target has an outcome, returning 200 with a per-target
+    // result instead.
+
+    // ----------------------------------------------------------- the result
+
+    const std::string delivery_id = "282d67a1b3c4e5f6";  // from the response above
+
+    auto detail = cli.Get("/api/v1/messages/" + delivery_id, headers);
+    if (!detail) {
+        std::cerr << "request failed: error " << static_cast<int>(detail.error()) << "\n";
+        return 1;
+    }
+    std::cout << detail->status << " " << detail->body << "\n";
+
+    // A 4xx carries {"error": "...", "message": "..."}. Branch on `error`,
+    // never on `message` — the message is written for a human and may change.
+    return 0;
+}

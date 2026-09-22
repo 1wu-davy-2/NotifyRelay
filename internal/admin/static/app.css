@@ -149,3 +149,64 @@ tbody tr:hover { background: #141c25; }
 .login h1 { text-align: center; }
 .login label { margin-top: 12px; }
 .login button { width: 100%; margin-top: 18px; }
+
+/* ------------------------------------------------------------- API docs */
+
+/* Code samples are wider than a table wants to be, so this one page gets more
+ * room. The rule is on the page rather than on main so the other pages keep
+ * their comfortable reading width. */
+main.wide { max-width: 1500px; }
+
+.page-head { display: flex; align-items: baseline; gap: 16px; }
+.page-head h1 { margin-bottom: 12px; }
+.lang-switch { margin-left: auto; font-size: 12px; }
+.lang-switch a { color: var(--muted); }
+.lang-switch a.on { color: var(--ink); font-weight: 700; }
+.lang-switch .sep { color: var(--line); margin: 0 6px; }
+
+.small { font-size: 12px; }
+
+.creds {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 14px 16px; margin-top: 14px;
+}
+.creds dl { display: grid; grid-template-columns: 120px 1fr; gap: 6px 16px; margin: 0; }
+.creds dt { color: var(--muted); }
+.creds dd { margin: 0; }
+.creds p { margin: 10px 0 0; }
+
+.samples { margin-top: 14px; }
+
+.tabs { display: flex; gap: 2px; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+.tab {
+  background: none; border: none; border-bottom: 2px solid transparent;
+  border-radius: 0; color: var(--muted); padding: 7px 14px;
+}
+.tab:hover { color: var(--ink); border-color: var(--line); }
+.tab.on { color: var(--ink); border-bottom-color: var(--accent); }
+
+.panel { margin-top: 12px; }
+.panel-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+
+.copy-btn { display: none; padding: 3px 10px; font-size: 12px; }
+.copy-btn.done { color: var(--ok); border-color: var(--ok); }
+
+/* Progressive enhancement, deliberately.
+ *
+ * The panels are all rendered and all visible in the HTML. Only once the
+ * script has run does the container get .ready, and only then are the inactive
+ * ones hidden. With scripting off the reader gets every sample stacked, which
+ * is verbose but complete — rather than seven tabs of which six do nothing. */
+.samples.ready .panel { display: none; }
+.samples.ready .panel.on { display: block; }
+.samples.ready .copy-btn { display: inline-block; }
+
+.panel pre {
+  margin: 0; padding: 14px 16px;
+  background: #0d1117; border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow-x: auto;
+  font-size: 12.5px; line-height: 1.55;
+  tab-size: 4;
+}
+.panel pre code { color: var(--ink); }

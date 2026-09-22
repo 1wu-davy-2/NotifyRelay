@@ -124,6 +124,15 @@ func NewHandler(d Deps) http.Handler {
 		pr.Get("/deliveries", h.pageHandler(h.deliveriesPage))
 		pr.Get("/deliveries/{id}", h.pageHandler(h.deliveryPage))
 		pr.Get("/audit", h.pageHandler(h.auditPage))
+
+		// A page, not JSON, so it belongs in this group: an operator who is not
+		// signed in should land on the sign-in form rather than on a blank page
+		// with a 401 in it.
+		//
+		// Registered at /api-docs rather than under /api/ because everything
+		// under /api/ answers JSON, and a page that returned HTML from there
+		// would be the one exception somebody has to remember.
+		pr.Get("/api-docs", h.pageHandler(h.apiDocsPage))
 	})
 
 	r.Group(func(pr chi.Router) {

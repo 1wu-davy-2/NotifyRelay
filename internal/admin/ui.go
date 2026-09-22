@@ -23,7 +23,7 @@ import (
 	"notifyrelay/internal/store"
 )
 
-//go:embed templates/*.html static/*
+//go:embed templates/*.html static/* samples/*
 var assets embed.FS
 
 // pages holds one parsed template set per page.
