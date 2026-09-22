@@ -60,7 +60,7 @@ type saveKeyRequest struct {
 func (h *handler) keysPage(w http.ResponseWriter, r *http.Request, actor string) {
 	views, err := h.keyViews(r)
 	if err != nil {
-		h.renderError(w, r, actor, "keys", "the API keys could not be read", err)
+		h.renderError(w, r, actor, "keys", copyFor(r).ErrKeysUnreadable, err)
 		return
 	}
 
@@ -80,10 +80,12 @@ func (h *handler) keysPage(w http.ResponseWriter, r *http.Request, actor string)
 
 // listKeys implements GET /admin/api/keys.
 func (h *handler) listKeys(w http.ResponseWriter, r *http.Request) {
+	t := copyFor(r)
+
 	views, err := h.keyViews(r)
 	if err != nil {
 		h.log.Error("admin: listing API keys failed", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the API keys could not be read")
+		writeError(w, http.StatusInternalServerError, "internal", t.ErrKeysUnreadable)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"keys": views})
@@ -93,28 +95,29 @@ func (h *handler) listKeys(w http.ResponseWriter, r *http.Request) {
 //
 // The response is the only time the token exists outside the caller's memory.
 func (h *handler) createKey(w http.ResponseWriter, r *http.Request) {
+	t := copyFor(r)
+
 	if h.deps.Keys == nil {
-		writeError(w, http.StatusNotImplemented, "unavailable",
-			"this deployment has no store for API keys")
+		writeError(w, http.StatusNotImplemented, "unavailable", t.ErrNoKeyStore)
 		return
 	}
 
 	var req saveKeyRequest
 	if err := decode(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "the request body is not valid JSON")
+		writeError(w, http.StatusBadRequest, "invalid_request", t.ErrInvalidJSON)
 		return
 	}
 
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "a name is required")
+		writeError(w, http.StatusBadRequest, "invalid_request", t.ErrKeyNameRequired)
 		return
 	}
 
 	token, err := generateToken()
 	if err != nil {
 		h.log.Error("admin: could not generate an API key", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the key could not be created")
+		writeError(w, http.StatusInternalServerError, "internal", t.ErrKeyCreateFailed)
 		return
 	}
 
@@ -132,7 +135,7 @@ func (h *handler) createKey(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.deps.Keys.PutAPIKey(r.Context(), key); err != nil {
 		h.log.Error("admin: could not store an API key", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the key could not be created")
+		writeError(w, http.StatusInternalServerError, "internal", t.ErrKeyCreateFailed)
 		return
 	}
 
@@ -144,7 +147,7 @@ func (h *handler) createKey(w http.ResponseWriter, r *http.Request) {
 		"id":      key.ID,
 		"name":    key.Name,
 		"token":   token,
-		"warning": "this is the only time the token is shown; it is not recoverable",
+		"warning": t.ErrTokenOnce,
 	})
 }
 
@@ -155,8 +158,10 @@ func (h *handler) createKey(w http.ResponseWriter, r *http.Request) {
 // leaves an overlap during which both work — and doing it any other way would
 // mean a rotation with an outage in the middle.
 func (h *handler) updateKey(w http.ResponseWriter, r *http.Request) {
+	t := copyFor(r)
+
 	if h.deps.Keys == nil {
-		writeError(w, http.StatusNotImplemented, "unavailable", "this deployment has no store for API keys")
+		writeError(w, http.StatusNotImplemented, "unavailable", t.ErrNoKeyStore)
 		return
 	}
 
@@ -164,29 +169,29 @@ func (h *handler) updateKey(w http.ResponseWriter, r *http.Request) {
 
 	var req saveKeyRequest
 	if err := decode(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "the request body is not valid JSON")
+		writeError(w, http.StatusBadRequest, "invalid_request", t.ErrInvalidJSON)
 		return
 	}
 	if req.Enabled == nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "enabled is required")
+		writeError(w, http.StatusBadRequest, "invalid_request", t.ErrKeyEnabledRequired)
 		return
 	}
 
 	key, err := h.deps.Keys.GetAPIKey(r.Context(), id)
 	if err != nil {
 		h.log.Error("admin: reading an API key failed", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the key could not be read")
+		writeError(w, http.StatusInternalServerError, "internal", t.ErrKeyUnreadable)
 		return
 	}
 	if key == nil {
-		writeError(w, http.StatusNotFound, "not_found", "no key with that id")
+		writeError(w, http.StatusNotFound, "not_found", t.ErrKeyNotFound)
 		return
 	}
 
 	key.Enabled = *req.Enabled
 	if err := h.deps.Keys.PutAPIKey(r.Context(), key); err != nil {
 		h.log.Error("admin: updating an API key failed", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the key could not be updated")
+		writeError(w, http.StatusInternalServerError, "internal", t.ErrKeyUpdateFailed)
 		return
 	}
 
@@ -201,8 +206,10 @@ func (h *handler) updateKey(w http.ResponseWriter, r *http.Request) {
 
 // deleteKey implements DELETE /admin/api/keys/{id}.
 func (h *handler) deleteKey(w http.ResponseWriter, r *http.Request) {
+	t := copyFor(r)
+
 	if h.deps.Keys == nil {
-		writeError(w, http.StatusNotImplemented, "unavailable", "this deployment has no store for API keys")
+		writeError(w, http.StatusNotImplemented, "unavailable", t.ErrNoKeyStore)
 		return
 	}
 
@@ -211,22 +218,22 @@ func (h *handler) deleteKey(w http.ResponseWriter, r *http.Request) {
 	key, err := h.deps.Keys.GetAPIKey(r.Context(), id)
 	if err != nil {
 		h.log.Error("admin: reading an API key failed", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the key could not be read")
+		writeError(w, http.StatusInternalServerError, "internal", t.ErrKeyUnreadable)
 		return
 	}
 	if key == nil {
-		writeError(w, http.StatusNotFound, "not_found", "no key with that id")
+		writeError(w, http.StatusNotFound, "not_found", t.ErrKeyNotFound)
 		return
 	}
 
 	deleted, err := h.deps.Keys.DeleteAPIKey(r.Context(), id)
 	if err != nil {
 		h.log.Error("admin: deleting an API key failed", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the key could not be deleted")
+		writeError(w, http.StatusInternalServerError, "internal", t.ErrKeyDeleteFailed)
 		return
 	}
 	if !deleted {
-		writeError(w, http.StatusNotFound, "not_found", "no key with that id")
+		writeError(w, http.StatusNotFound, "not_found", t.ErrKeyNotFound)
 		return
 	}
 

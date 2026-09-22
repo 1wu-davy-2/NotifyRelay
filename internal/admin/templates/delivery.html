@@ -3,59 +3,87 @@
 <main>
   {{template "flash" .}}
 
-  <div class="row">
-    <h1>Delivery</h1>
-    <span class="spacer"></span>
-    <a class="button" href="/admin/deliveries">Back</a>
-    {{if .Delivery.Replayable}}
-    <button type="button" class="primary" data-replay="{{.Delivery.ID}}">Replay</button>
-    {{end}}
+  <div class="page-head">
+    <h1>{{.T.TitleDelivery}}</h1>
+    <div class="page-actions">
+      <a class="button" href="/admin/deliveries">{{.T.CommonBack}}</a>
+      {{if .Delivery.Replayable}}
+      <button type="button" class="primary" data-replay="{{.Delivery.ID}}">{{.T.CommonReplay}}</button>
+      {{end}}
+    </div>
   </div>
 
   <dl class="facts">
-    <dt>ID</dt><dd><code>{{.Delivery.ID}}</code></dd>
-    <dt>Request</dt><dd><code>{{.Delivery.RequestID}}</code></dd>
-    <dt>Channel</dt><dd><code>{{.Delivery.Target}}</code> <span class="muted">{{.Delivery.ChannelType}}</span></dd>
-    <dt>Status</dt><dd><span class="tag {{.Delivery.Status}}">{{.Delivery.Status}}</span></dd>
-    <dt>Attempts</dt><dd>{{.Delivery.Attempts}}</dd>
-    <dt>Created</dt><dd>{{stamp .Delivery.CreatedAt}} <span class="muted">({{since .Delivery.CreatedAt}})</span></dd>
-    {{if .Delivery.SentAt}}<dt>Sent</dt><dd>{{stamp .Delivery.SentAt}}</dd>{{end}}
-    {{if .Delivery.NextAttemptAt}}<dt>Next attempt</dt><dd>{{stamp .Delivery.NextAttemptAt}}</dd>{{end}}
-    {{if .Delivery.LastError}}<dt>Last error</dt><dd class="wrap">{{.Delivery.LastError}}</dd>{{end}}
+    <dt>{{.T.DeliveryFactID}}</dt><dd><code>{{.Delivery.ID}}</code></dd>
+    <dt>{{.T.DeliveryFactRequest}}</dt><dd><code>{{.Delivery.RequestID}}</code></dd>
+    <dt>{{.T.DeliveryFactChannel}}</dt><dd><code>{{.Delivery.Target}}</code> <span class="muted">{{.Delivery.ChannelType}}</span></dd>
+    <dt>{{.T.DeliveryFactStatus}}</dt><dd><span class="tag {{.Delivery.Status}}">{{if eq .Delivery.Status "queued"}}{{.T.StatusQueued}}{{else if eq .Delivery.Status "sending"}}{{.T.StatusSending}}{{else if eq .Delivery.Status "sent"}}{{.T.StatusSent}}{{else if eq .Delivery.Status "failed"}}{{.T.StatusFailed}}{{else}}{{.Delivery.Status}}{{end}}</span></dd>
+    <dt>{{.T.DeliveryFactAttempts}}</dt><dd>{{.Delivery.Attempts}}</dd>
+    <dt>{{.T.DeliveryFactCreated}}</dt><dd>{{stamp .Delivery.CreatedAt}} <span class="muted">({{since .Delivery.CreatedAt}})</span></dd>
+    {{if .Delivery.SentAt}}<dt>{{.T.DeliveryFactSent}}</dt><dd>{{stamp .Delivery.SentAt}}</dd>{{end}}
+    {{if .Delivery.NextAttemptAt}}<dt>{{.T.DeliveryFactNextAttempt}}</dt><dd>{{stamp .Delivery.NextAttemptAt}}</dd>{{end}}
+    {{if .Delivery.LastError}}<dt>{{.T.DeliveryFactLastError}}</dt><dd class="wrap">{{.Delivery.LastError}}</dd>{{end}}
   </dl>
 
+  {{/* Why the button above is not there, in the two cases it is withheld. The
+       dead-letter row and the message body have separate lifetimes, so a
+       delivery can be dead-lettered and still not be replayable — and a page
+       that simply omitted the button would leave the operator clicking Detail
+       on a row that looks replayable and finding nothing to press. */}}
   {{if not .Delivery.Replayable}}
   <p class="muted">
     {{if eq .Delivery.Status "failed"}}
-      The message body is no longer on disk, so this one cannot be replayed.
+    {{.T.DeliveryBodyExpired}}
     {{else}}
-      Only a dead-lettered delivery can be replayed.
+    {{.T.DeliveryNotDeadLetter}}
     {{end}}
   </p>
   {{end}}
 
-  <h2>Attempts</h2>
+  <h2>{{.T.DeliveryAttemptsHeading}}</h2>
   {{if .Attempts}}
-  <table>
-    <thead>
-      <tr><th>#</th><th>When</th><th>Class</th><th>Skipped</th><th>ms</th><th>Detail</th><th>Error</th></tr>
-    </thead>
-    <tbody>
-    {{range .Attempts}}
-      <tr>
-        <td>{{.AttemptNo}}</td>
-        <td title="{{stamp .CreatedAt}}">{{since .CreatedAt}}</td>
-        <td><span class="tag {{lower .Class}}">{{.Class}}</span></td>
-        <td class="muted">{{.SkipReason}}</td>
-        <td>{{.ElapsedMS}}</td>
-        <td class="wrap">{{.Detail}}</td>
-        <td class="wrap">{{.Error}}</td>
-      </tr>
-    {{end}}
-    </tbody>
-  </table>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>{{.T.DeliveryAttemptWhen}}</th>
+          <th>{{.T.DeliveryAttemptClass}}</th>
+          <th>{{.T.DeliveryAttemptSkipped}}</th>
+          <th>ms</th>
+          <th>{{.T.DeliveryAttemptDetail}}</th>
+          <th>{{.T.DeliveryAttemptError}}</th>
+        </tr>
+      </thead>
+      <tbody>
+      {{range .Attempts}}
+        <tr>
+          <td>{{.AttemptNo}}</td>
+          <td title="{{stamp .CreatedAt}}">{{since .CreatedAt}}</td>
+          <td><span class="tag {{lower .Class}}">{{.Class}}</span></td>
+          <td class="muted">{{.SkipReason}}</td>
+          <td>{{.ElapsedMS}}</td>
+          <td class="wrap">{{.Detail}}</td>
+          <td class="wrap">{{.Error}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
   {{else}}
-  <p class="muted">No attempts recorded.</p>
+  {{/* An empty attempt history is not an empty page: it is the finding. The
+       channel was never called, which is a different problem from a call that
+       failed, and the body names the three things that hold a call back. The
+       action goes to the reference the body points at, where skip_reason is
+       written up. */}}
+  <div class="empty">
+    {{template "icon-deliveries" .}}
+    <h2>{{.T.DeliveryEmptyTitle}}</h2>
+    <p>{{.T.DeliveryEmptyBody}}</p>
+    <div class="actions">
+      <a class="button" href="/admin/api-docs">{{.T.BackToAPI}}</a>
+    </div>
+  </div>
   {{end}}
 </main>
 {{template "foot" .}}

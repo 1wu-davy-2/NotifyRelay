@@ -311,7 +311,7 @@
         return;
       }
       window.location.href = "/admin/channels?ok=" +
-        encodeURIComponent("Saved " + document.getElementById("channel-name").value);
+        encodeURIComponent(fill(t("SavedFlash"), [document.getElementById("channel-name").value]));
     }
 
     function failed(err, body) {
@@ -361,6 +361,109 @@
     }
   }
 
+  /* --------------------------------------------- sending a test notification */
+
+  /* The one thing on the channel page that proves a notification arrives.
+   *
+   * It goes through the ordinary delivery path and comes back with the id of the
+   * delivery it created, and that page is where the operator is sent — the
+   * answer to "did it work" is the attempt history, not this dialog. A success
+   * message here would be the interface claiming a delivery it has not seen yet.
+   *
+   * The channel is on the form's own data attribute rather than in a hidden
+   * field: it is read from the page the server rendered, so it cannot be edited
+   * into a different channel by whoever is posting. */
+  var testNotifyForm = document.getElementById("test-notify-form");
+  if (testNotifyForm) {
+    var testNotifyResult = document.getElementById("test-notify-result");
+
+    testNotifyForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+
+      var name = testNotifyForm.getAttribute("data-channel");
+      if (!name) { return; }
+
+      request("POST", "/admin/api/channels/" + encodeURIComponent(name) + "/test-notification", {
+        title: document.getElementById("test-notify-title").value,
+        body: document.getElementById("test-notify-body").value
+      }).then(function (res) {
+        if (res && res.delivery_id) {
+          window.location.href = "/admin/deliveries/" + encodeURIComponent(res.delivery_id);
+          return;
+        }
+        window.location.href = "/admin/deliveries?ok=" + encodeURIComponent(t("TestNotifyQueued"));
+      }).catch(function (err) { say(testNotifyResult, err.message, false); });
+    });
+  }
+
+  /* The dialog is opened from a row's button, which carries the channel name.
+   * The heading names it too, so there is no doubt which channel is about to
+   * receive a real message. */
+  document.addEventListener("click", function (event) {
+    var target = event.target;
+    if (!target.dataset || !target.dataset.testNotify) { return; }
+
+    var name = target.dataset.testNotify;
+    testNotifyForm.setAttribute("data-channel", name);
+
+    var named = document.getElementById("test-notify-channel");
+    if (named) { named.textContent = name; }
+
+    var result = document.getElementById("test-notify-result");
+    if (result) { result.hidden = true; }
+
+    var dialog = document.getElementById("test-notify-dialog");
+    if (dialog) { dialog.showModal(); }
+  });
+
+  var cancelTestNotify = document.getElementById("cancel-test-notify");
+  if (cancelTestNotify) {
+    cancelTestNotify.addEventListener("click", function () {
+      var dialog = document.getElementById("test-notify-dialog");
+      if (dialog) { dialog.close(); }
+    });
+  }
+
+  /* --------------------------------------------------- unsaved form changes */
+
+  /* A form that has been edited and not saved asks before it is abandoned.
+   *
+   * The channel form holds a configuration that exists nowhere until Save, and
+   * the Cancel link sits right next to Save. Clicking it is a navigation, which
+   * is how a half-finished edit is lost without anybody deciding to lose it —
+   * and the edit can be twenty fields of a channel type the operator just read
+   * the documentation for.
+   *
+   * beforeunload covers the other exits: a reload, a bookmark, the back button.
+   * The browser shows its own wording there and will not let this one supply
+   * any, which is why the Cancel link gets a confirm() of ours instead. */
+  (function () {
+    var form = document.getElementById("channel-form");
+    if (!form) { return; }
+
+    var dirty = false;
+    form.addEventListener("input", function () { dirty = true; });
+    form.addEventListener("change", function () { dirty = true; });
+    // Saving is the one exit that keeps the edits, so it clears the flag before
+    // the redirect that follows it.
+    form.addEventListener("submit", function () { dirty = false; });
+
+    window.addEventListener("beforeunload", function (event) {
+      if (!dirty) { return undefined; }
+      event.preventDefault();
+      event.returnValue = "";
+      return "";
+    });
+
+    var cancel = form.querySelector('a[href="/admin/channels"]');
+    if (cancel) {
+      cancel.addEventListener("click", function (event) {
+        if (!dirty) { return; }
+        if (!window.confirm(t("DiscardChanges"))) { event.preventDefault(); }
+      });
+    }
+  })();
+
   /* ---------------------------------------------------------- list actions */
 
   document.addEventListener("click", function (event) {
@@ -381,7 +484,7 @@
       request("POST", "/admin/api/channels/" + encodeURIComponent(name) + "/breaker/reset")
         .then(function (res) {
           window.location.href = "/admin/channels?ok=" +
-            encodeURIComponent(name + ": breaker was " + res.was + ", now closed");
+            encodeURIComponent(fill(t("BreakerResetFlash"), [name, res.was]));
         })
         .catch(function (err) { window.alert(err.message); });
     }
@@ -393,7 +496,8 @@
       }
       request("DELETE", "/admin/api/channels/" + encodeURIComponent(channel))
         .then(function () {
-          window.location.href = "/admin/channels?ok=" + encodeURIComponent("Deleted " + channel);
+          window.location.href = "/admin/channels?ok=" +
+            encodeURIComponent(fill(t("DeletedFlash"), [channel]));
         })
         .catch(function (err) { window.alert(err.message); });
     }
@@ -401,9 +505,18 @@
     if (target.dataset.enableKey || target.dataset.disableKey) {
       var enableId = target.dataset.enableKey || target.dataset.disableKey;
       var turningOn = Boolean(target.dataset.enableKey);
+      var toggledName = target.dataset.keyName || enableId;
+
+      /* The flash is the point. This is the switch that decides what can
+       * authenticate against the whole service, and it used to reload the page
+       * and say nothing — so "did that work" was answered by noticing that a
+       * small tag had changed colour. */
       request("POST", "/admin/api/keys/" + encodeURIComponent(enableId),
               { enabled: turningOn })
-        .then(function () { window.location.reload(); })
+        .then(function () {
+          var flash = turningOn ? t("KeyStateEnabled") : t("KeyStateDisabled");
+          window.location.href = "/admin/keys?ok=" + encodeURIComponent(fill(flash, [toggledName]));
+        })
         .catch(function (err) { window.alert(err.message); });
     }
 
@@ -414,7 +527,8 @@
       }
       request("DELETE", "/admin/api/keys/" + encodeURIComponent(target.dataset.deleteKey))
         .then(function () {
-          window.location.href = "/admin/keys?ok=" + encodeURIComponent("Deleted " + keyName);
+          window.location.href = "/admin/keys?ok=" +
+            encodeURIComponent(fill(t("DeletedFlash"), [keyName]));
         })
         .catch(function (err) { window.alert(err.message); });
     }
@@ -426,7 +540,8 @@
       }
       request("POST", "/admin/api/deliveries/" + encodeURIComponent(id) + "/replay")
         .then(function () {
-          window.location.href = "/admin/deliveries?ok=" + encodeURIComponent("Replayed " + id);
+          window.location.href = "/admin/deliveries?ok=" +
+            encodeURIComponent(fill(t("ReplayedFlash"), [id]));
         })
         .catch(function (err) { window.alert(err.message); });
     }
@@ -440,7 +555,7 @@
       var input = document.getElementById("key-name");
       var name = input.value.trim();
       if (!name) {
-        window.alert(t("GiveKeyAName"));
+        window.alert(t("KeyNameRequired"));
         return;
       }
 
@@ -467,7 +582,7 @@
     if (!dialog) {
       // No dialog support: the token is still the thing the operator needs, so
       // it goes somewhere they can read it rather than nowhere.
-      window.prompt(t("PromptCopyToken"), token);
+      window.prompt(t("CopyTokenPrompt"), token);
       return;
     }
     document.getElementById("token-value").textContent = token;
@@ -508,7 +623,7 @@
       var confirm = document.getElementById("confirm").value;
 
       if (password !== confirm) {
-        window.alert(t("PasswordsDiffer"));
+        window.alert(t("PasswordsNoMatch"));
         return;
       }
 
@@ -520,7 +635,7 @@
       }).then(function (res) {
         return res.json().then(function (body) {
           if (!res.ok) {
-            throw new Error(body.message || "the account could not be created");
+            throw new Error(body.message || t("SetupFailed"));
           }
           return body;
         });
@@ -619,7 +734,7 @@
       document.execCommand("copy");
       done();
     } catch (e) {
-      window.prompt(t("PromptCopyText"), text);
+      window.prompt(t("CopyManualPrompt"), text);
     }
     document.body.removeChild(area);
   }

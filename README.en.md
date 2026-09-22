@@ -83,8 +83,8 @@ happened:
 |---|---|
 | **The two keys** | Generated into `keys/` in the data directory on first boot, mode 0600, read back on every boot after. |
 | **The administrator** | Nothing is pre-set. Whoever opens the UI first creates it, and that page closes permanently. |
-| **API keys** | Created on the **Keys** page. The plaintext is shown once. |
-| **Channels** | Added on the **Channels** page. |
+| **API keys** | Created on the **密钥** (Keys) page. The plaintext is shown once. |
+| **Channels** | Added on the **渠道** (Channels) page. |
 
 > **The window that comes with that.** Between the container starting and you
 > opening the UI, whoever reaches it first becomes the administrator. On an
@@ -193,9 +193,15 @@ The full reference — every endpoint including the operator API, every field,
 status code and error code — is [`docs/07-api.md`](docs/07-api.md) (Chinese).
 
 There is also a copyable version inside the operator UI, under **API** in the
-nav: the same endpoints and error codes, plus complete worked examples in curl,
-Go, Python, Java, C#, C and C++, with the base URL filled in from the address
-you reached the page on. Chinese and English.
+sidebar: the same endpoints and error codes, plus complete worked examples in
+curl, Go, Python, Java, C#, C and C++, with the base URL filled in from the
+address you reached the page on.
+
+The interface itself is **Chinese by default, switchable to English** from the
+sidebar. The choice is kept in a cookie, so it survives navigation and reloads.
+The copy table lives in `internal/admin/i18n` and is a struct rather than a map:
+a missing translation is a compile error, not a blank space somebody finds in
+production.
 
 ---
 

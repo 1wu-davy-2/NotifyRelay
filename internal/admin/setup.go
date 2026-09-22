@@ -3,9 +3,9 @@ package admin
 import (
 	"context"
 	"crypto/subtle"
+	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -103,43 +103,43 @@ func (h *handler) setupPage(w http.ResponseWriter, r *http.Request) {
 
 // createAdministrator implements POST /admin/api/setup.
 func (h *handler) createAdministrator(w http.ResponseWriter, r *http.Request) {
+	t := copyFor(r)
+
 	var req setupRequest
 	if err := decode(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "the request body is not valid JSON")
+		writeError(w, http.StatusBadRequest, "invalid_request", t.ErrInvalidJSON)
 		return
 	}
 
 	key := clientKey(r)
 	if wait := h.limiter.retryAfter(key); wait > 0 {
 		w.Header().Set("Retry-After", formatSeconds(wait))
-		writeError(w, http.StatusTooManyRequests, "too_many_attempts",
-			"too many attempts; try again later")
+		writeError(w, http.StatusTooManyRequests, "too_many_attempts", t.ErrTooManyAttempts)
 		return
 	}
 
 	username := strings.TrimSpace(req.Username)
 	if username == "" {
 		h.limiter.fail(key)
-		writeError(w, http.StatusBadRequest, "invalid_request", "a username is required")
+		writeError(w, http.StatusBadRequest, "invalid_request", t.ErrUsernameRequired)
 		return
 	}
 	if len([]rune(req.Password)) < minPasswordLength {
 		h.limiter.fail(key)
 		writeError(w, http.StatusBadRequest, "invalid_request",
-			"the password must be at least "+strconv.Itoa(minPasswordLength)+" characters")
+			fmt.Sprintf(t.ErrPasswordTooShort, minPasswordLength))
 		return
 	}
 
 	if h.deps.Credentials == nil {
-		writeError(w, http.StatusNotImplemented, "unavailable",
-			"this deployment has no store for an administrator account")
+		writeError(w, http.StatusNotImplemented, "unavailable", t.ErrNoCredentialStore)
 		return
 	}
 
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
 		h.log.Error("admin: could not hash the new password", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the account could not be created")
+		writeError(w, http.StatusInternalServerError, "internal", t.ErrAccountCreateFailed)
 		return
 	}
 
@@ -150,7 +150,7 @@ func (h *handler) createAdministrator(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		h.log.Error("admin: could not create the administrator", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the account could not be created")
+		writeError(w, http.StatusInternalServerError, "internal", t.ErrAccountCreateFailed)
 		return
 	}
 	if !created {
@@ -159,8 +159,7 @@ func (h *handler) createAdministrator(w http.ResponseWriter, r *http.Request) {
 		// administrator, and letting them believe otherwise would have them
 		// sign in with a password that was never stored.
 		h.log.Warn("admin: a setup submission lost the race", slog.String("remote", key))
-		writeError(w, http.StatusConflict, "already_configured",
-			"an administrator already exists for this deployment")
+		writeError(w, http.StatusConflict, "already_configured", t.ErrAlreadyConfigured)
 		return
 	}
 
@@ -176,7 +175,7 @@ func (h *handler) createAdministrator(w http.ResponseWriter, r *http.Request) {
 	id, err := h.sessions.create(username)
 	if err != nil {
 		h.log.Error("admin: could not create a session", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the session could not be created")
+		writeError(w, http.StatusInternalServerError, "internal", t.ErrSessionCreateFailed)
 		return
 	}
 

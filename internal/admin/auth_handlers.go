@@ -21,9 +21,11 @@ type sessionResponse struct {
 
 // login starts a session.
 func (h *handler) login(w http.ResponseWriter, r *http.Request) {
+	t := copyFor(r)
+
 	var req loginRequest
 	if err := decode(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "the request body is not valid JSON")
+		writeError(w, http.StatusBadRequest, "invalid_request", t.ErrInvalidJSON)
 		return
 	}
 
@@ -31,8 +33,7 @@ func (h *handler) login(w http.ResponseWriter, r *http.Request) {
 
 	if wait := h.limiter.retryAfter(key); wait > 0 {
 		w.Header().Set("Retry-After", formatSeconds(wait))
-		writeError(w, http.StatusTooManyRequests, "too_many_attempts",
-			"too many failed sign-in attempts; try again later")
+		writeError(w, http.StatusTooManyRequests, "too_many_attempts", t.ErrTooManySignIns)
 		return
 	}
 
@@ -45,15 +46,14 @@ func (h *handler) login(w http.ResponseWriter, r *http.Request) {
 		)
 		// One message for both a wrong username and a wrong password: telling
 		// them apart tells an attacker which half they already have.
-		writeError(w, http.StatusUnauthorized, "invalid_credentials",
-			"the username or password is not correct")
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", t.ErrBadCredentials)
 		return
 	}
 
 	id, err := h.sessions.create(actor)
 	if err != nil {
 		h.log.Error("admin: could not create a session", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the session could not be created")
+		writeError(w, http.StatusInternalServerError, "internal", t.ErrSessionCreateFailed)
 		return
 	}
 	h.limiter.succeed(key)

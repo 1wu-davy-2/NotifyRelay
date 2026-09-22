@@ -334,17 +334,17 @@ var navHome = map[string]string{
 func backFor(t *i18n.Messages, nav string) (string, string) {
 	switch nav {
 	case "deliveries":
-		return navHome[nav], t.BackDeliveries
+		return navHome[nav], t.BackToDeliveries
 	case "audit":
-		return navHome[nav], t.BackAudit
+		return navHome[nav], t.BackToAudit
 	case "keys":
-		return navHome[nav], t.BackKeys
+		return navHome[nav], t.BackToKeys
 	case "api-docs":
-		return navHome[nav], t.BackAPI
+		return navHome[nav], t.BackToAPI
 	case "setup":
-		return navHome[nav], t.BackSetup
+		return navHome[nav], t.BackToSetup
 	}
-	return navHome["channels"], t.BackChannels
+	return navHome["channels"], t.BackToChannels
 }
 
 func (h *handler) render(w http.ResponseWriter, r *http.Request, page string, data any) {
@@ -409,7 +409,7 @@ func (h *handler) channelsPage(w http.ResponseWriter, r *http.Request, actor str
 
 	stored, err := h.deps.Channels.Load(ctx)
 	if err != nil {
-		h.renderError(w, r, actor, "channels", "the channels could not be read", err)
+		h.renderError(w, r, actor, "channels", copyFor(r).ErrChannelsUnreadable, err)
 		return
 	}
 
@@ -432,7 +432,7 @@ func (h *handler) channelsPage(w http.ResponseWriter, r *http.Request, actor str
 	if editing != "" && editing != newChannel {
 		cfg, err := h.deps.Channels.Get(ctx, editing)
 		if err != nil {
-			h.renderError(w, r, actor, "channels", "the channel could not be read", err)
+			h.renderError(w, r, actor, "channels", copyFor(r).ErrChannelUnreadable, err)
 			return
 		}
 		if cfg != nil {
@@ -520,7 +520,7 @@ func (h *handler) deliveriesPage(w http.ResponseWriter, r *http.Request, actor s
 	if h.deps.Deliveries != nil {
 		deliveries, err := h.deps.Deliveries.List(r.Context(), filter)
 		if err != nil {
-			h.renderError(w, r, actor, "deliveries", "the deliveries could not be read", err)
+			h.renderError(w, r, actor, "deliveries", copyFor(r).ErrDeliveriesUnreadable, err)
 			return
 		}
 		for _, d := range deliveries {
@@ -561,23 +561,23 @@ func (h *handler) deliveryPage(w http.ResponseWriter, r *http.Request, actor str
 	id := chi.URLParam(r, "id")
 
 	if h.deps.Deliveries == nil {
-		h.renderError(w, r, actor, "deliveries", "this deployment has no delivery store", nil)
+		h.renderError(w, r, actor, "deliveries", copyFor(r).ErrNoDeliveryStore, nil)
 		return
 	}
 
 	d, err := h.deps.Deliveries.Get(r.Context(), id)
 	if err != nil {
-		h.renderError(w, r, actor, "deliveries", "the delivery could not be read", err)
+		h.renderError(w, r, actor, "deliveries", copyFor(r).ErrDeliveryUnreadable, err)
 		return
 	}
 	if d == nil {
-		h.renderError(w, r, actor, "deliveries", "no delivery with that id", nil)
+		h.renderError(w, r, actor, "deliveries", copyFor(r).ErrDeliveryNotFound, nil)
 		return
 	}
 
 	attempts, err := h.deps.Deliveries.Attempts(r.Context(), id)
 	if err != nil {
-		h.renderError(w, r, actor, "deliveries", "the attempt history could not be read", err)
+		h.renderError(w, r, actor, "deliveries", copyFor(r).ErrAttemptsUnreadable, err)
 		return
 	}
 
@@ -590,12 +590,18 @@ func (h *handler) deliveryPage(w http.ResponseWriter, r *http.Request, actor str
 		})
 	}
 
+	// The nav key stays "deliveries" so the sidebar keeps the section lit, and
+	// the title is set separately: a tab reading "Deliveries" over a page about
+	// one delivery is the tab promising a list that is not there.
+	base := h.pageBase(r, actor, "deliveries")
+	base.Title = base.T.TitleDelivery
+
 	h.render(w, r, "delivery.html", struct {
 		pageData
 		Delivery deliveryView
 		Attempts []attemptView
 	}{
-		pageData: h.pageBase(r, actor, "deliveries"),
+		pageData: base,
 		Delivery: h.viewDelivery(d),
 		Attempts: views,
 	})
@@ -608,7 +614,7 @@ func (h *handler) auditPage(w http.ResponseWriter, r *http.Request, actor string
 	if h.deps.Audit != nil {
 		actions, err := h.deps.Audit.ListAdminActions(r.Context(), 200)
 		if err != nil {
-			h.renderError(w, r, actor, "audit", "the audit trail could not be read", err)
+			h.renderError(w, r, actor, "audit", copyFor(r).ErrAuditUnreadable, err)
 			return
 		}
 		for _, a := range actions {
@@ -635,7 +641,7 @@ func (h *handler) auditPage(w http.ResponseWriter, r *http.Request, actor string
 
 func (h *handler) pageBase(r *http.Request, actor, nav string) pageData {
 	lang := langFrom(r.Context())
-	t := i18n.For(lang)
+	t := copyFor(r)
 
 	return pageData{
 		Title:      titleFor(t, nav),
@@ -668,11 +674,13 @@ func titleFor(t *i18n.Messages, nav string) string {
 	case "api-docs":
 		return t.TitleAPI
 	case "login":
-		return t.TitleLogin
+		return t.TitleSignIn
 	case "setup":
 		return t.TitleSetup
+	case "delivery":
+		return t.TitleDelivery
 	}
-	return t.Brand
+	return t.AppName
 }
 
 // renderError shows the error as a page rather than a JSON body.
@@ -680,12 +688,22 @@ func titleFor(t *i18n.Messages, nav string) string {
 // The underlying error is logged and not shown: an operator gets a sentence
 // they can act on, and the detail that might name a file path or a query stays
 // in the log where it belongs.
+//
+// message is display copy and nothing else. It used to be the log line too,
+// which was fine while there was one language: now it is the language the
+// request asked for, and a log whose lines change with the caller's cookie is a
+// log nobody can grep. The line carries the page's stable key instead.
 func (h *handler) renderError(w http.ResponseWriter, r *http.Request, actor, nav, message string, err error) {
 	if err != nil {
-		h.log.Error("admin: "+message, slog.String("error", err.Error()))
+		h.log.Error("admin: could not render a page",
+			slog.String("page", nav), slog.String("error", err.Error()))
 	}
 
 	data := h.pageBase(r, actor, nav)
+	// The title becomes the error's, not the page's. A tab reading "Deliveries"
+	// next to a page saying the deliveries could not be read is a tab that
+	// promises something the page does not have.
+	data.Title = data.T.TitleError
 	data.Error = message
 	data.Back, data.BackLabel = backFor(data.T, nav)
 	w.WriteHeader(http.StatusInternalServerError)

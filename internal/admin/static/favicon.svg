@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="NotifyRelay">
+  <rect width="32" height="32" rx="7" fill="#0d1117"/>
+  <g fill="none" stroke="#58a6ff" stroke-width="2.4" stroke-linecap="round">
+    <circle cx="16" cy="22.5" r="2.4" fill="#58a6ff" stroke="none"/>
+    <path d="M11.2 17.4a6.8 6.8 0 0 1 9.6 0"/>
+    <path d="M7.2 13.2a12.4 12.4 0 0 1 17.6 0"/>
+  </g>
+</svg>

@@ -62,7 +62,7 @@ func (h *handler) listChannels(w http.ResponseWriter, r *http.Request) {
 	stored, err := h.deps.Channels.Load(r.Context())
 	if err != nil {
 		h.log.Error("admin: listing channels failed", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the channels could not be read")
+		writeError(w, http.StatusInternalServerError, "internal", copyFor(r).ErrChannelsUnreadable)
 		return
 	}
 
@@ -78,11 +78,11 @@ func (h *handler) getChannel(w http.ResponseWriter, r *http.Request) {
 	cfg, err := h.deps.Channels.Get(r.Context(), chi.URLParam(r, "name"))
 	if err != nil {
 		h.log.Error("admin: reading a channel failed", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the channel could not be read")
+		writeError(w, http.StatusInternalServerError, "internal", copyFor(r).ErrChannelUnreadable)
 		return
 	}
 	if cfg == nil {
-		writeError(w, http.StatusNotFound, "not_found", "no channel with that name")
+		writeError(w, http.StatusNotFound, "not_found", copyFor(r).ErrChannelNotFound)
 		return
 	}
 	writeJSON(w, http.StatusOK, h.view(*cfg))
@@ -132,11 +132,11 @@ type saveRequest struct {
 func (h *handler) saveChannel(w http.ResponseWriter, r *http.Request) {
 	var req saveRequest
 	if err := decode(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "the request body is not valid JSON")
+		writeError(w, http.StatusBadRequest, "invalid_request", copyFor(r).ErrInvalidJSON)
 		return
 	}
 	if req.Name == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "a channel name is required")
+		writeError(w, http.StatusBadRequest, "invalid_request", copyFor(r).ErrChannelNameRequired)
 		return
 	}
 
@@ -154,7 +154,7 @@ func (h *handler) saveChannel(w http.ResponseWriter, r *http.Request) {
 	existing, err := h.deps.Channels.Get(r.Context(), req.Name)
 	if err != nil {
 		h.log.Error("admin: reading a channel failed", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the channel could not be read")
+		writeError(w, http.StatusInternalServerError, "internal", copyFor(r).ErrChannelUnreadable)
 		return
 	}
 
@@ -168,7 +168,7 @@ func (h *handler) saveChannel(w http.ResponseWriter, r *http.Request) {
 	// been for, and refusing that would break every script using it.
 	if existing != nil && req.Editing == newChannel && !req.Replace {
 		writeError(w, http.StatusConflict, "name_taken",
-			"a channel named "+req.Name+" already exists; saving would replace it")
+			fmt.Sprintf(copyFor(r).ErrChannelNameTaken, req.Name))
 		return
 	}
 
@@ -180,7 +180,7 @@ func (h *handler) saveChannel(w http.ResponseWriter, r *http.Request) {
 	cfg, err = h.deps.Channels.MergeEdit(r.Context(), cfg)
 	if err != nil {
 		h.log.Error("admin: merging a channel edit failed", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the channel could not be read")
+		writeError(w, http.StatusInternalServerError, "internal", copyFor(r).ErrChannelUnreadable)
 		return
 	}
 
@@ -232,11 +232,11 @@ func (h *handler) deleteChannel(w http.ResponseWriter, r *http.Request) {
 	existed, err := h.deps.Channels.Delete(r.Context(), name)
 	if err != nil {
 		h.log.Error("admin: deleting a channel failed", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the channel could not be deleted")
+		writeError(w, http.StatusInternalServerError, "internal", copyFor(r).ErrChannelDeleteFailed)
 		return
 	}
 	if !existed {
-		writeError(w, http.StatusNotFound, "not_found", "no channel with that name")
+		writeError(w, http.StatusNotFound, "not_found", copyFor(r).ErrChannelNotFound)
 		return
 	}
 
@@ -263,14 +263,14 @@ func (h *handler) testChannel(w http.ResponseWriter, r *http.Request) {
 
 	cfg, err := h.deps.Channels.Get(r.Context(), name)
 	if err != nil || cfg == nil {
-		writeError(w, http.StatusNotFound, "not_found", "no channel with that name")
+		writeError(w, http.StatusNotFound, "not_found", copyFor(r).ErrChannelNotFound)
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 
-	res := h.probe(ctx, *cfg)
+	res := h.probe(ctx, *cfg, copyFor(r).ErrChannelBuildFailed)
 
 	// Test results are not audited: a connectivity check changes nothing, and
 	// a trail full of them would bury the actions that did.
@@ -284,10 +284,15 @@ func (h *handler) testChannel(w http.ResponseWriter, r *http.Request) {
 }
 
 // probe builds and tests a channel instance.
-func (h *handler) probe(ctx context.Context, cfg config.ChannelConfig) channel.Result {
+//
+// buildErr is the copy for a channel that cannot be built. It is passed in
+// rather than looked up here because the result's detail is shown to the
+// operator, and only the caller has the request that says which language they
+// are reading.
+func (h *handler) probe(ctx context.Context, cfg config.ChannelConfig, buildErr string) channel.Result {
 	ch, err := channel.New(cfg.Type, cfg.Name, cfg.Config)
 	if err != nil {
-		return channel.Permanent(err, "the channel could not be built from its configuration")
+		return channel.Permanent(err, buildErr)
 	}
 	return ch.Test(ctx)
 }
@@ -305,8 +310,7 @@ func (h *handler) resetBreaker(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
 	if h.deps.Breakers == nil {
-		writeError(w, http.StatusNotImplemented, "breaker_disabled",
-			"the circuit breaker is not enabled in this deployment")
+		writeError(w, http.StatusNotImplemented, "breaker_disabled", copyFor(r).ErrBreakerDisabled)
 		return
 	}
 
@@ -314,7 +318,7 @@ func (h *handler) resetBreaker(w http.ResponseWriter, r *http.Request) {
 	// configured would create breaker state for a channel that is not there.
 	cfg, err := h.deps.Channels.Get(r.Context(), name)
 	if err != nil || cfg == nil {
-		writeError(w, http.StatusNotFound, "not_found", "no channel with that name")
+		writeError(w, http.StatusNotFound, "not_found", copyFor(r).ErrChannelNotFound)
 		return
 	}
 
@@ -350,7 +354,7 @@ func (h *handler) listAudit(w http.ResponseWriter, r *http.Request) {
 	actions, err := h.deps.Audit.ListAdminActions(r.Context(), 200)
 	if err != nil {
 		h.log.Error("admin: listing audit actions failed", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the audit trail could not be read")
+		writeError(w, http.StatusInternalServerError, "internal", copyFor(r).ErrAuditUnreadable)
 		return
 	}
 

@@ -283,6 +283,7 @@ func run() error {
 		Router:      rtr,
 		Deliveries:  persistence,
 		Bodies:      bodies,
+		Queue:       worker,
 		Waker:       worker,
 		Audit:       persistence,
 		Log:         log,

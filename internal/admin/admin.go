@@ -10,6 +10,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -67,6 +68,13 @@ type Deps struct {
 	// nothing is offered for replay, which is the honest answer when the
 	// surface cannot tell.
 	Bodies BodyStore
+	// Queue accepts a test notification. Optional; without it the operator
+	// surface cannot send one, and says so rather than offering a button that
+	// does nothing.
+	//
+	// This is the only way into the queue from here, and it is deliberately
+	// narrow: see sendTestNotification for why it takes no target.
+	Queue Enqueuer
 	// Waker nudges the queue after a replay. Optional.
 	Waker Waker
 	// Audit records what operators did. Optional.
@@ -184,6 +192,7 @@ func NewHandler(d Deps) http.Handler {
 		pr.Get("/api/channels/{name}", h.getChannel)
 		pr.Delete("/api/channels/{name}", h.deleteChannel)
 		pr.Post("/api/channels/{name}/test", h.testChannel)
+		pr.Post("/api/channels/{name}/test-notification", h.sendTestNotification)
 		pr.Post("/api/channels/{name}/breaker/reset", h.resetBreaker)
 
 		pr.Get("/api/deliveries", h.listDeliveries)
@@ -224,21 +233,23 @@ func (h *handler) securityHeaders(next http.Handler) http.Handler {
 // changes state without the CSRF header.
 func (h *handler) requireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t := copyFor(r)
+
 		cookie, err := r.Cookie(cookieName)
 		if err != nil {
-			writeError(w, http.StatusUnauthorized, "unauthenticated", "sign in first")
+			writeError(w, http.StatusUnauthorized, "unauthenticated", t.ErrSignInFirst)
 			return
 		}
 
 		actor, ok := h.sessions.lookup(cookie.Value)
 		if !ok {
-			writeError(w, http.StatusUnauthorized, "unauthenticated", "the session has expired")
+			writeError(w, http.StatusUnauthorized, "unauthenticated", t.ErrSessionExpired)
 			return
 		}
 
 		if isStateChanging(r.Method) && r.Header.Get(csrfHeader) == "" {
 			writeError(w, http.StatusForbidden, "missing_csrf_header",
-				"state-changing requests must carry the "+csrfHeader+" header")
+				fmt.Sprintf(t.ErrMissingCSRF, csrfHeader))
 			return
 		}
 

@@ -50,6 +50,17 @@ func langFrom(ctx context.Context) i18n.Lang {
 	return i18n.Default
 }
 
+// copyFor is the copy table for a request.
+//
+// The short name for what is otherwise i18n.For(langFrom(r.Context())) at
+// forty-odd call sites, most of which are one error message. Handlers use it
+// directly rather than passing a language around: a handler that has the
+// request has everything it needs, and threading a language through would be
+// threading the same value twice.
+func copyFor(r *http.Request) *i18n.Messages {
+	return i18n.For(langFrom(r.Context()))
+}
+
 // langOf resolves a request's language from the three sources.
 func langOf(r *http.Request) i18n.Lang {
 	if tag := r.URL.Query().Get(i18n.Param); tag != "" {

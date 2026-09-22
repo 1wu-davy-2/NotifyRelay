@@ -2,91 +2,112 @@
 {{template "nav" .}}
 <main>
   {{template "flash" .}}
-  <h1>API keys</h1>
-  <p class="muted">
-    What producers authenticate with. A key is shown once, when it is created —
-    only its digest is stored, so nothing here can show it to you again. If one
-    is lost, delete it and make another.
-  </p>
 
-  <div class="card">
-    <h3>New key</h3>
-    <div class="row">
-      <div class="key-name-field">
-        <label for="key-name">Name</label>
-        <input type="text" id="key-name" placeholder="ci-pipeline" autocomplete="off">
-      </div>
-      <button type="button" class="primary" id="create-key">Create</button>
-    </div>
-    <p class="desc">
-      The name is for you, not for the service: it is what appears in the audit
-      trail when the key is used to change something, and what you will read in
-      six months when deciding whether it can be deleted.
-    </p>
+  <div class="page-head">
+    <h1>{{.T.TitleKeys}}</h1>
+    <p class="lede">{{.T.KeysIntro}}</p>
   </div>
 
+  {{/* Creating a key is the one thing this page is for, so the form is on it
+       rather than behind a button. It is not a <form>: the script posts the
+       name and shows the token in the dialog below, and a real submit would
+       reload the page — which is how the token, existing only in that
+       response, would be lost. */}}
+  <section class="card">
+    <h2>{{.T.KeysNewHeading}}</h2>
+    <div>
+      <label for="key-name">{{.T.KeysNameLabel}}</label>
+      <div class="row">
+        <input type="text" id="key-name" placeholder="{{.T.KeysNameHint}}" autocomplete="off">
+        <button type="button" class="primary" id="create-key">{{.T.KeysCreateButton}}</button>
+      </div>
+      <p class="desc">{{.T.KeysNameDesc}}</p>
+    </div>
+  </section>
+
   {{if .Configured}}
-  <p class="muted small">
-    {{.Configured}} key(s) come from the configuration file. They work, and they
-    are listed below, but they cannot be changed here — editing the file is what
-    changes those.
-  </p>
+  <p class="muted small">{{printf .T.KeysConfiguredNotice .Configured}}</p>
   {{end}}
 
   {{if .Keys}}
-  <table>
-    <thead>
-      <tr>
-        <th>Name</th><th>Source</th><th>Status</th><th>Created</th><th>Last used</th><th></th>
-      </tr>
-    </thead>
-    <tbody>
-    {{range .Keys}}
-      <tr>
-        <td>{{.Name}}</td>
-        <td><span class="tag">{{.Source}}</span></td>
-        <td>
-          {{if .Enabled}}<span class="tag on">enabled</span>
-          {{else}}<span class="tag off">disabled</span>{{end}}
-        </td>
-        <td>{{if .CreatedAt}}{{.CreatedAt}}{{else}}<span class="muted">—</span>{{end}}</td>
-        <td>
-          {{if .LastUsedAt}}{{.LastUsedAt}}
-          {{else}}<span class="muted">never</span>{{end}}
-        </td>
-        <td class="actions">
-          {{if eq .Source "database"}}
-            {{if .Enabled}}
-              <button type="button" data-disable-key="{{.ID}}">Disable</button>
-            {{else}}
-              <button type="button" data-enable-key="{{.ID}}">Enable</button>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>{{.T.KeysTableName}}</th>
+          <th>{{.T.KeysTableSource}}</th>
+          <th>{{.T.KeysTableStatus}}</th>
+          <th>{{.T.KeysTableCreated}}</th>
+          <th>{{.T.KeysTableLastUsed}}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {{range .Keys}}
+        <tr>
+          <td>{{.Name}}</td>
+          {{/* The source column is where a key came from, in the reader's
+               language for the case that matters: a key pinned by the
+               configuration file cannot be edited here, and saying so in the
+               row is what stops somebody looking for its delete button. The
+               stored-in-the-database case keeps the value the server reports,
+               which is an identifier rather than a sentence. */}}
+          <td>
+            {{if eq .Source "configuration"}}<span class="tag">{{$.T.CommonSetInConfig}}</span>
+            {{else}}<span class="tag">{{.Source}}</span>{{end}}
+          </td>
+          <td>
+            {{if .Enabled}}<span class="tag on">{{$.T.CommonEnabled}}</span>
+            {{else}}<span class="tag off">{{$.T.CommonDisabled}}</span>{{end}}
+          </td>
+          {{/* CreatedAt and LastUsedAt arrive as RFC 3339 strings, not times,
+               so they are printed as they came. A key that has never been used
+               has no timestamp at all. */}}
+          <td>{{if .CreatedAt}}{{.CreatedAt}}{{else}}<span class="muted">—</span>{{end}}</td>
+          <td>
+            {{if .LastUsedAt}}{{.LastUsedAt}}
+            {{else}}<span class="muted">{{$.T.CommonNever}}</span>{{end}}
+          </td>
+          <td class="actions">
+            {{if eq .Source "database"}}
+              {{if .Enabled}}
+              <button type="button" data-disable-key="{{.ID}}">{{$.T.CommonDisable}}</button>
+              {{else}}
+              <button type="button" data-enable-key="{{.ID}}">{{$.T.CommonEnable}}</button>
+              {{end}}
+              <button type="button" class="danger" data-delete-key="{{.ID}}" data-key-name="{{.Name}}">{{$.T.CommonDelete}}</button>
             {{end}}
-            <button type="button" class="danger" data-delete-key="{{.ID}}" data-key-name="{{.Name}}">Delete</button>
-          {{else}}
-            <span class="muted small">set in the configuration file</span>
-          {{end}}
-        </td>
-      </tr>
-    {{end}}
-    </tbody>
-  </table>
+          </td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
   {{else}}
-  <p class="muted">
-    No keys yet. Until one exists, every request to the notification API is
-    answered <code>401</code>.
-  </p>
+  {{/* Nothing can call the notification API until a key exists. The way out is
+       the card above, and the body names the status code every request gets in
+       the meantime — which is the detail an operator arrives here already
+       holding. */}}
+  <div class="empty">
+    {{template "icon-keys" .}}
+    <h2>{{.T.KeysEmptyTitle}}</h2>
+    <p>{{.T.KeysEmptyBody}}</p>
+  </div>
   {{end}}
 
+  {{/* The token, once. The dialog is markup only: the script fills the value
+       in and opens it, and the button below is what closes it and reloads the
+       list. There is no backdrop-click handler, so a stray click outside
+       cannot dismiss the one view of a value that is never stored — and the
+       token is in this dialog and the response that created it, nowhere
+       else. */}}
   <dialog id="token-dialog">
-    <h3>Copy this now</h3>
-    <p class="muted">
-      This is the only time the token is shown. It is not stored anywhere in a
-      form that can be read back.
-    </p>
+    <h3>{{.T.KeysDialogHeading}}</h3>
+    <p class="muted">{{.T.KeysDialogBody}}</p>
     <pre><code id="token-value"></code></pre>
     <div class="row">
-      <button type="button" class="primary" id="copy-token">Copy</button>
-      <button type="button" id="close-token">Done</button>
+      <button type="button" class="primary" id="copy-token">{{.T.KeysDialogCopy}}</button>
+      <button type="button" id="close-token">{{.T.KeysDialogDone}}</button>
     </div>
   </dialog>
 </main>

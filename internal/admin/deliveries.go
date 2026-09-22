@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -121,7 +122,8 @@ func (h *handler) listDeliveries(w http.ResponseWriter, r *http.Request) {
 		}
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 0 {
-			writeError(w, http.StatusBadRequest, "invalid_request", p.name+" must be a non-negative integer")
+			writeError(w, http.StatusBadRequest, "invalid_request",
+				fmt.Sprintf(copyFor(r).ErrInvalidIntParam, p.name))
 			return
 		}
 		*p.into = n
@@ -130,7 +132,7 @@ func (h *handler) listDeliveries(w http.ResponseWriter, r *http.Request) {
 	deliveries, err := h.deps.Deliveries.List(r.Context(), filter)
 	if err != nil {
 		h.log.Error("admin: listing deliveries failed", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the deliveries could not be read")
+		writeError(w, http.StatusInternalServerError, "internal", copyFor(r).ErrDeliveriesUnreadable)
 		return
 	}
 
@@ -144,7 +146,7 @@ func (h *handler) listDeliveries(w http.ResponseWriter, r *http.Request) {
 // getDelivery implements GET /admin/api/deliveries/{id}.
 func (h *handler) getDelivery(w http.ResponseWriter, r *http.Request) {
 	if h.deps.Deliveries == nil {
-		writeError(w, http.StatusNotImplemented, "unavailable", "this deployment has no delivery store")
+		writeError(w, http.StatusNotImplemented, "unavailable", copyFor(r).ErrNoDeliveryStore)
 		return
 	}
 
@@ -152,18 +154,18 @@ func (h *handler) getDelivery(w http.ResponseWriter, r *http.Request) {
 	d, err := h.deps.Deliveries.Get(r.Context(), id)
 	if err != nil {
 		h.log.Error("admin: reading a delivery failed", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the delivery could not be read")
+		writeError(w, http.StatusInternalServerError, "internal", copyFor(r).ErrDeliveryUnreadable)
 		return
 	}
 	if d == nil {
-		writeError(w, http.StatusNotFound, "not_found", "no delivery with that id")
+		writeError(w, http.StatusNotFound, "not_found", copyFor(r).ErrDeliveryNotFound)
 		return
 	}
 
 	attempts, err := h.deps.Deliveries.Attempts(r.Context(), id)
 	if err != nil {
 		h.log.Error("admin: reading attempts failed", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the attempt history could not be read")
+		writeError(w, http.StatusInternalServerError, "internal", copyFor(r).ErrAttemptsUnreadable)
 		return
 	}
 
@@ -185,7 +187,7 @@ func (h *handler) getDelivery(w http.ResponseWriter, r *http.Request) {
 // replayDelivery implements POST /admin/api/deliveries/{id}/replay.
 func (h *handler) replayDelivery(w http.ResponseWriter, r *http.Request) {
 	if h.deps.Deliveries == nil {
-		writeError(w, http.StatusNotImplemented, "unavailable", "this deployment has no delivery store")
+		writeError(w, http.StatusNotImplemented, "unavailable", copyFor(r).ErrNoDeliveryStore)
 		return
 	}
 
@@ -194,11 +196,11 @@ func (h *handler) replayDelivery(w http.ResponseWriter, r *http.Request) {
 	d, err := h.deps.Deliveries.Get(r.Context(), id)
 	if err != nil {
 		h.log.Error("admin: reading a delivery failed", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the delivery could not be read")
+		writeError(w, http.StatusInternalServerError, "internal", copyFor(r).ErrDeliveryUnreadable)
 		return
 	}
 	if d == nil {
-		writeError(w, http.StatusNotFound, "not_found", "no delivery with that id")
+		writeError(w, http.StatusNotFound, "not_found", copyFor(r).ErrDeliveryNotFound)
 		return
 	}
 
@@ -206,27 +208,24 @@ func (h *handler) replayDelivery(w http.ResponseWriter, r *http.Request) {
 	// than a delivery that fails again a second later.
 	if !d.Status.Replayable() {
 		writeError(w, http.StatusConflict, "not_replayable",
-			"only a dead-lettered delivery can be replayed; this one is "+string(d.Status))
+			fmt.Sprintf(copyFor(r).ErrNotReplayableStatus, d.Status))
 		return
 	}
 	if !h.bodyAvailable(id) {
-		writeError(w, http.StatusConflict, "body_expired",
-			"the message body is no longer on disk, so there is nothing to send; "+
-				"it was removed by the retention policy")
+		writeError(w, http.StatusConflict, "body_expired", copyFor(r).ErrBodyExpired)
 		return
 	}
 
 	replayed, err := h.deps.Deliveries.Replay(r.Context(), id, time.Now().UTC())
 	if err != nil {
 		h.log.Error("admin: replay failed", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the delivery could not be replayed")
+		writeError(w, http.StatusInternalServerError, "internal", copyFor(r).ErrReplayFailed)
 		return
 	}
 	if !replayed {
 		// The row changed between the read and the write: something else
 		// replayed it, or a worker picked it up. Not an error worth a 500.
-		writeError(w, http.StatusConflict, "not_replayable",
-			"the delivery is no longer in a state that can be replayed")
+		writeError(w, http.StatusConflict, "not_replayable", copyFor(r).ErrNotReplayable)
 		return
 	}
 
@@ -250,7 +249,7 @@ func (h *handler) stats(w http.ResponseWriter, r *http.Request) {
 	s, err := h.deps.Deliveries.Stats(r.Context())
 	if err != nil {
 		h.log.Error("admin: reading queue stats failed", slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "internal", "the queue statistics could not be read")
+		writeError(w, http.StatusInternalServerError, "internal", copyFor(r).ErrStatsUnreadable)
 		return
 	}
 	writeJSON(w, http.StatusOK, s)

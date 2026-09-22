@@ -71,10 +71,34 @@ cookie 会随进程重启一起失效，而不是一直有效到过期。
 ### 1.3 无鉴权
 
 `/healthz`、`/readyz`、`/metrics`、`POST /admin/api/login`、`POST /admin/api/logout`、
-`GET /admin/login`、管理后台的静态资源。
+`GET /admin/login`、`GET /admin/setup`、`GET /admin/lang/{lang}`、管理后台的静态资源。
 
 `/metrics` 不鉴权是刻意的：抓取端不该需要凭据，它暴露的是计数不是内容。
 它绑定在服务监听的地址上，想让它私有，改 `server.addr`。
+
+### 1.4 界面语言
+
+后台有两种语言：中文（默认）和英文。
+
+| 来源 | 优先级 | 用途 |
+|---|---|---|
+| 查询参数 `?lang=zh\|en` | 最高 | 让一条链接锁定语言——截图、缺陷报告、书签 |
+| Cookie `nr_lang` | 中 | 记住选择，**跨导航存活** |
+| 默认值 | 最低 | `zh` |
+
+`GET /admin/lang/{lang}?to=<路径>` 写 cookie 并 302 回 `to`。`to` 只接受
+`/admin/` 开头的路径，且**先做 `path.Clean` 再判断**——`/admin/../etc/passwd`
+能通过前缀检查，而浏览器会把它解析成 `/etc/passwd`，所以校验必须针对浏览器
+实际会去的地方。`to` 里残留的 `lang` 参数会被剥掉，否则下一次请求就把选择撤销了。
+
+这个端点**不需要会话**：登录页和首次运行页都要能切换语言，而那时还没有会话——
+这也正是选择存在 cookie 而不是会话里的原因。
+
+`lang` 值不认识时回落到默认语言，**不报错**。界面没有的语言不是失败，是回落。
+
+> 界面文案的表在 `internal/admin/i18n`，是**结构体**不是 map：漏翻一条是编译错误，
+> 而不是运行时空白。审计记录里的 `detail`（`created`、`changed: host` 等）**刻意不翻译**——
+> 它们是记录不是界面文案，翻译会让同一张表混两种语言且历史记录无法统一。
 
 ---
 
@@ -507,10 +531,18 @@ X-Frame-Options: DENY
 | `enabled` | `bool` | | 省略视为启用 |
 | `config` | `object` | | 省略的**私密**参数从已存配置**合并**——不传密码 = 不改密码，不是清空 |
 | `quota` | `object` | | 同 `channelView.quota` |
+| `editing` | `string` | | 调用方以为自己在做什么：新建表单传 `"__new__"`，编辑表单传渠道名，**不传表示「这就是我想要的状态」** |
+| `replace` | `bool` | | 确认覆盖。只在 `editing="__new__"` 且名字已被占用时有意义 |
 
 处理顺序是**合并 → 校验 → 落库 → 重载**。顺序很重要：先校验再合并的话，
 只改一个 host 会被拒（报「username is set but password is not」），而表单从没拿到过密码，
 **没有办法满足**。
+
+**这个端点是 upsert，但重名会先问一句。** 不传 `editing` 时行为完全不变：
+名字存在就覆盖，这是脚本想要的语义，也是这个端点一直以来的语义。传了
+`editing="__new__"` 且名字已存在时，返回 409 而不是静默覆盖——运维点的是
+「新建渠道」，得到的结果不该是「一条正在投递的渠道被换掉了」。确认后带
+`replace: true` 重发即可。
 
 | 状态码 | 响应体 | 触发 |
 |---|---|---|
@@ -520,6 +552,7 @@ X-Frame-Options: DENY
 | 400 | `invalid_request` | JSON 错 / 未知字段 / 名字为空 |
 | 400 | `invalid_config` | `channel.New` 或 `ValidateParams` 失败，消息会点名参数 |
 | 400 | `save_failed` | 写库失败 |
+| 409 | `name_taken` | `editing="__new__"` 且名字已存在、未带 `replace` |
 | 500 | `internal` | 合并前后读取失败 |
 
 > **202 是「存下来了但没生效」**，不是失败。响应里的 `reload` 说明为什么。

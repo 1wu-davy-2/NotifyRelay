@@ -1,8 +1,8 @@
 {{template "head" .}}
 <main class="centred">
   <form class="card login" id="login-form">
-    <h1>{{.T.Brand}}</h1>
-    <p class="muted">{{.T.LoginIntro}}</p>
+    <h1>{{.T.AppName}}</h1>
+    <p class="muted">{{.T.LoginSubtitle}}</p>
 
     <label for="username">{{.T.LoginUsername}}</label>
     <input id="username" name="username" autocomplete="username" autofocus required>
@@ -16,4 +16,4 @@
     {{template "langs" .}}
   </form>
 </main>
-{{template "foot" .}}
+{{template "foot-plain" .}}

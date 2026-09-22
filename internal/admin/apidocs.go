@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"notifyrelay/internal/admin/i18n"
 )
 
 // The API reference page.
@@ -23,20 +25,39 @@ import (
 type apiDocSample struct {
 	ID    string // anchor and tab identifier
 	Label string // what the tab says
-	Note  string // one line about the dependency, if any
-	Body  string // the code, with the base URL already substituted
+	// Note is the line about the dependency, when that line is a package name
+	// rather than prose. The prose ones come from the copy table; see
+	// sampleNote.
+	Note string
+	Body string // the code, with the base URL already substituted
 }
 
-// apiDocEndpoint is one row of the endpoint table.
+// apiDocEndpoint is one row of the endpoint table, in both languages.
+//
+// The purpose column is row data rather than page copy, so it stays here: each
+// sentence belongs to the method and path beside it, and splitting fourteen of
+// them into fourteen fields of the copy table would make the table they
+// describe harder to read, not easier. One column is picked per request, by
+// endpointsIn, and the page renders a single-language slice.
 type apiDocEndpoint struct {
 	Method string
 	Path   string
-	Auth   string // "Bearer" or "none"
+	Auth   string // "Bearer", or "none" for an endpoint that takes no credential
 	Zh     string
 	En     string
 }
 
-// apiDocError is one row of the error-code table.
+// apiDocRow is one endpoint as the page renders it: one language, already
+// chosen, and no second column to pick from.
+type apiDocRow struct {
+	Method  string
+	Path    string
+	Auth    string // empty when the endpoint takes no credential
+	Purpose string
+}
+
+// apiDocError is one row of the error-code table, in both languages. Same
+// reasoning as apiDocEndpoint.
 type apiDocError struct {
 	Code   string
 	Status string
@@ -44,17 +65,47 @@ type apiDocError struct {
 	En     string
 }
 
+// apiDocErrorRow is one error as the page renders it.
+type apiDocErrorRow struct {
+	Code    string
+	Status  string
+	Meaning string
+}
+
 // sampleFiles is the tab order. Fixed rather than sorted: curl first because
 // it is what somebody reaches for to check the service is alive, then the
 // languages in rough order of how often they turn up asking.
+//
+// Only the notes that name a package are here. The other three are sentences,
+// and a sentence is copy; see sampleNote.
 var sampleFiles = []apiDocSample{
-	{ID: "curl", Label: "curl", Note: "no dependency"},
-	{ID: "go", Label: "Go", Note: "standard library"},
-	{ID: "python", Label: "Python", Note: "standard library"},
+	{ID: "curl", Label: "curl"},
+	{ID: "go", Label: "Go"},
+	{ID: "python", Label: "Python"},
 	{ID: "java", Label: "Java", Note: "11+, java.net.http"},
 	{ID: "csharp", Label: "C#", Note: ".NET 5+, System.Net.Http"},
 	{ID: "c", Label: "C", Note: "libcurl"},
 	{ID: "cpp", Label: "C++", Note: "cpp-httplib, header-only"},
+}
+
+// sampleNote is the dependency line beside a sample's tab.
+//
+// Three of the seven are prose and come from the copy table. The remaining four
+// name a package — "libcurl", "11+, java.net.http" — and read the same in both
+// languages, which is why they are carried on the row and not translated;
+// docs/i18n-inventory.md §4 lists them under "deliberately not translated".
+//
+// Python reads the Go field because the note is the same sentence, not because
+// the two samples have anything else in common.
+func sampleNote(t *i18n.Messages, s apiDocSample) string {
+	switch s.ID {
+	case "curl":
+		return t.APIDocsSampleNoteCurl
+	case "go", "python":
+		return t.APIDocsSampleNoteGo
+	default:
+		return s.Note
+	}
 }
 
 // loadSamples reads the embedded samples once, at startup.
@@ -122,33 +173,64 @@ var apiErrors = []apiDocError{
 	{"internal", "500", "其余一切。消息里不含内部细节", "Everything else. The message leaks no internals"},
 }
 
+// endpointsIn picks one language's column out of the endpoint table.
+func endpointsIn(l i18n.Lang) []apiDocRow {
+	out := make([]apiDocRow, 0, len(apiEndpoints))
+	for _, e := range apiEndpoints {
+		row := apiDocRow{Method: e.Method, Path: e.Path, Purpose: e.Zh}
+		if l == i18n.EN {
+			row.Purpose = e.En
+		}
+		// "none" is the table's marker for an endpoint that takes no
+		// credential. The page shows the copy table's word for that, so the
+		// row leaves Auth empty and the template branches on it.
+		if e.Auth != "none" {
+			row.Auth = e.Auth
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+// errorsIn picks one language's column out of the error-code table.
+func errorsIn(l i18n.Lang) []apiDocErrorRow {
+	out := make([]apiDocErrorRow, 0, len(apiErrors))
+	for _, e := range apiErrors {
+		row := apiDocErrorRow{Code: e.Code, Status: e.Status, Meaning: e.Zh}
+		if l == i18n.EN {
+			row.Meaning = e.En
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
 // apiDocsPage implements GET /admin/api-docs.
 func (h *handler) apiDocsPage(w http.ResponseWriter, r *http.Request, actor string) {
-	lang := r.URL.Query().Get("lang")
-	if lang != "en" {
-		lang = "zh"
-	}
-
 	base := h.pageBase(r, actor, "api-docs")
-	// pageBase derives the title from the nav key, which would read "Api-docs".
-	base.Title = "API"
+
+	// The table and the language come from pageBase's single resolution, so the
+	// rows and the shell around them cannot disagree about which language this
+	// is. The page used to resolve the query parameter a second time, which
+	// also meant the cookie was ignored here and nowhere else.
+	t, lang := base.T, base.Lang
 
 	baseURL := apiBaseURL(r)
 
 	samples := make([]apiDocSample, 0, len(apiSamples))
 	for _, s := range apiSamples {
 		s.Body = strings.ReplaceAll(s.Body, "{{BASE_URL}}", baseURL)
+		s.Note = sampleNote(t, s)
 		samples = append(samples, s)
 	}
 
 	h.render(w, r, "apidocs.html", struct {
 		pageData
-		BaseURL   string
-		Lang      string
-		Zh        bool
-		Samples   []apiDocSample
-		Endpoints []apiDocEndpoint
-		Errors    []apiDocError
+		BaseURL string
+		Samples []apiDocSample
+		// The two tables, one language's column already selected.
+		Endpoints []apiDocRow
+		Errors    []apiDocErrorRow
 		// Secure says whether the operator's own connection to this page is
 		// TLS. If it is not, the token they are about to copy into a script
 		// will cross the network in the clear, and that is worth saying on the
@@ -157,11 +239,9 @@ func (h *handler) apiDocsPage(w http.ResponseWriter, r *http.Request, actor stri
 	}{
 		pageData:  base,
 		BaseURL:   baseURL,
-		Lang:      lang,
-		Zh:        lang == "zh",
 		Samples:   samples,
-		Endpoints: apiEndpoints,
-		Errors:    apiErrors,
+		Endpoints: endpointsIn(lang),
+		Errors:    errorsIn(lang),
 		Secure:    cookieSecure(r),
 	})
 }

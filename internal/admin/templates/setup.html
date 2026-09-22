@@ -1,7 +1,7 @@
 {{template "head" .}}
 <main class="centred">
-  <div class="login">
-    <h1>{{.T.Brand}}</h1>
+  <div class="card login">
+    <h1>{{.T.AppName}}</h1>
 
     <p class="muted">{{.T.SetupIntro}}</p>
 
@@ -23,9 +23,9 @@
       <button type="submit" class="primary">{{.T.SetupSubmit}}</button>
     </form>
 
-    <p class="desc">{{.T.SetupPasswordWhy}}</p>
+    <p class="desc">{{.T.SetupPasswordRule}}</p>
 
     {{template "langs" .}}
   </div>
 </main>
-{{template "foot" .}}
+{{template "foot-plain" .}}
