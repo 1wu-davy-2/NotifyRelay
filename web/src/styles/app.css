@@ -1,0 +1,1171 @@
+/* The component layer.
+ *
+ * The vocabulary the pages use, and nothing else. A page that sticks to these
+ * looks like the rest of the interface:
+ *
+ *   .shell / .side / .content   the frame
+ *   .topbar                     language, theme, account
+ *   main / .page-head / .crumbs the reading column
+ *   .card                       a panel
+ *   .btn .btn-primary …         actions
+ *   .grid / .field / .desc      a form
+ *   .toolbar                    a row of filters above a table
+ *   .table-wrap                 a table that scrolls rather than widening the page
+ *   .tag                        a status pill: .on .off .warn .bad .info
+ *   .empty                      an empty state: icon, heading, body, action
+ *   .stats / .stat              counters
+ *   .flash                      a message: .ok or .bad
+ *   .row / .spacer / .actions   horizontal arrangement
+ *   .muted / .small / .mono     text treatments
+ *
+ * No framework and no webfont: the CSP admits nothing remote, and a management
+ * interface that needs a CDN to render is one that stops working exactly when
+ * the network it is diagnosing is broken.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.6 var(--font);
+  -webkit-text-size-adjust: 100%;
+  transition: background var(--ease), color var(--ease);
+}
+
+/* The wash. Two soft gradients behind everything, fixed so they do not scroll
+ * away from the content they are lighting. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(700px 400px at 15% -5%, var(--wash-1), transparent 60%),
+    radial-gradient(600px 380px at 90% 0%, var(--wash-2), transparent 60%);
+  transition: background var(--ease);
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+code,
+kbd,
+pre {
+  font-family: var(--mono);
+  font-size: 0.92em;
+}
+code {
+  color: var(--ink);
+  background: var(--raised);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+pre code {
+  background: none;
+  padding: 0;
+}
+hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: var(--s5) 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+/* ------------------------------------------------------------------ frame */
+
+.shell {
+  position: relative;
+  z-index: 1;
+  min-height: 100%;
+}
+
+.side {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 20;
+  width: var(--side-width);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s5);
+  padding: var(--s5) var(--s3) var(--s4);
+  background: var(--sidebar);
+  border-right: 1px solid var(--line);
+  backdrop-filter: blur(16px);
+  overflow-y: auto;
+  transition: background var(--ease);
+}
+
+.content {
+  margin-left: var(--side-width);
+  min-width: 0;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 var(--s2);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+}
+.brand:hover {
+  text-decoration: none;
+}
+.brand .logo {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  background: var(--grad);
+  color: var(--accent-ink);
+  box-shadow: var(--glow);
+}
+
+.nav {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+.nav a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--ink-dim);
+  font-weight: 500;
+  transition: var(--ease);
+}
+.nav a:hover {
+  background: var(--hover);
+  color: var(--ink);
+  text-decoration: none;
+}
+.nav a.on {
+  background: var(--active-nav);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.nav a svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+.nav .pill {
+  margin-left: auto;
+}
+
+.side-foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: 0 var(--s2);
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+.side-foot .actor {
+  font-weight: 600;
+  color: var(--ink);
+}
+.side-foot .link {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-dim);
+  font: inherit;
+  cursor: pointer;
+}
+.side-foot .link:hover {
+  color: var(--bad);
+  text-decoration: underline;
+}
+.side-foot .brand-sub {
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* ----------------------------------------------------------------- topbar */
+
+.topbar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: var(--side-width);
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  height: var(--top-height);
+  padding: 0 var(--s6);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(14px);
+  transition: background var(--ease);
+}
+
+.langs {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--hover);
+}
+.langs a,
+.langs button {
+  padding: 5px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--ease);
+}
+.langs a:hover,
+.langs button:hover {
+  color: var(--ink);
+  text-decoration: none;
+}
+.langs .on {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--hover);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  transition: var(--ease);
+}
+.theme-toggle:hover {
+  border-color: var(--accent);
+}
+.theme-toggle svg {
+  width: 15px;
+  height: 15px;
+}
+/* The knob is drawn by ::after and moved by a transform, not by swapping the
+ * background: a transition on `left` relayouts on every frame, and this is one
+ * of the few places where the difference is visible. */
+.switch {
+  position: relative;
+  flex: none;
+  width: 32px;
+  height: 18px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--accent-soft);
+}
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: transform 0.2s ease;
+}
+:root[data-theme='light'] .switch::after {
+  transform: translateX(14px);
+}
+
+.user {
+  position: relative;
+}
+.user-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 4px 10px 4px 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--hover);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--ease);
+}
+.user-btn:hover {
+  border-color: var(--accent);
+}
+.avatar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--grad);
+  color: var(--accent-ink);
+  font-size: 12px;
+  font-weight: 700;
+}
+.user-btn .caret {
+  width: 12px;
+  height: 12px;
+  color: var(--ink-dim);
+}
+.user-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  min-width: 160px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+}
+.user-menu a,
+.user-menu button {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.user-menu a svg,
+.user-menu button svg {
+  width: 14px;
+  height: 14px;
+  color: var(--ink-dim);
+}
+.user-menu a:hover,
+.user-menu button:hover {
+  background: var(--hover);
+  color: var(--accent);
+  text-decoration: none;
+}
+.user-menu .sep {
+  height: 1px;
+  margin: 5px 4px;
+  background: var(--line);
+}
+
+/* ------------------------------------------------------------------- page */
+
+main {
+  padding: calc(var(--top-height) + var(--s6)) var(--s7) var(--s7);
+  max-width: 1080px;
+}
+main.wide {
+  max-width: 1440px;
+}
+
+/* ---------------------------------------------------------- auth screens */
+
+/* The two signed-out screens, which are the only pages outside the shell.
+ *
+ * Centred in the viewport rather than laid out beside a sidebar, and the
+ * padding is the viewport's rather than the top bar's — there is no top bar to
+ * clear, and inheriting that offset would leave the card sitting below a band
+ * of nothing. Both `padding` and `max-width` are overridden from the `main`
+ * rule above, which is why they are stated here at all. */
+.centred {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  max-width: none;
+  padding: var(--s5);
+}
+
+/* 360px is the width the server-rendered sign-in card had. Wide enough for a
+ * password manager's own button, narrow enough that two fields do not look
+ * like a form somebody gave up on. */
+.login {
+  width: 360px;
+  margin: 0;
+  padding: 22px;
+}
+.login h1 {
+  text-align: center;
+  margin-bottom: var(--s4);
+}
+.login label {
+  display: block;
+  margin-top: var(--s3);
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.login button[type='submit'] {
+  width: 100%;
+  margin-top: var(--s5);
+}
+/* The switcher, centred under the form rather than pinned to a corner. The
+ * person who needs it is the person who cannot read the form above it. */
+.login .langs {
+  justify-content: center;
+  width: fit-content;
+  margin: var(--s4) auto 0;
+}
+/* A message under the button rather than above the fields: the form is two
+ * boxes, and a banner that pushes them down on the second attempt moves the box
+ * the operator is about to type into. */
+.login .flash.inset {
+  margin: var(--s3) 0 0;
+}
+
+.crumbs {
+  margin-bottom: var(--s3);
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+.crumbs a {
+  color: var(--ink-dim);
+}
+.crumbs b {
+  color: var(--ink);
+}
+
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s4);
+  margin-bottom: var(--s5);
+}
+h1 {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+/* The gradient heading is a dark-theme device. In light the same fill washes
+ * out against white and reads as a rendering fault rather than a choice. */
+:root[data-theme='dark'] h1 {
+  display: inline-block;
+  background: var(--grad);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.page-desc {
+  max-width: 640px;
+  margin-top: 6px;
+  color: var(--ink-dim);
+}
+
+/* ---------------------------------------------------------------- buttons */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: var(--ease);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-primary {
+  background: var(--grad);
+  color: var(--accent-ink);
+}
+:root[data-theme='dark'] .btn-primary {
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.35);
+}
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.btn-ghost {
+  border: 1px solid var(--line);
+  background: var(--hover);
+}
+.btn-ghost:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.btn-danger {
+  border: 1px solid var(--bad-line);
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+.btn-danger:hover:not(:disabled) {
+  border-color: var(--bad);
+}
+.btn-sm {
+  padding: 5px 12px;
+  font-size: 12px;
+}
+
+/* ------------------------------------------------------------------ cards */
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+:root[data-theme='dark'] .card {
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+/* ------------------------------------------------------------- first run */
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  padding: 18px 20px;
+}
+.step + .step {
+  border-top: 1px solid var(--line);
+}
+.step-num {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--ink-dim);
+  font-size: 13px;
+  font-weight: 600;
+}
+.step.done .step-num {
+  border-color: var(--ok);
+  background: var(--ok);
+  color: var(--accent-ink);
+}
+.step-body {
+  flex: 1;
+  min-width: 0;
+}
+.step-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+.step.done .step-title {
+  color: var(--ok);
+}
+.step-sub {
+  margin-top: 2px;
+  color: var(--ink-dim);
+  font-size: 13px;
+}
+
+/* ------------------------------------------------------------ empty state */
+
+.empty {
+  padding: 64px var(--s5);
+  text-align: center;
+}
+.empty .icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  margin: 0 auto var(--s4);
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.empty h3 {
+  margin-bottom: 6px;
+  font-size: 16px;
+}
+.empty p {
+  margin-bottom: 20px;
+  color: var(--ink-dim);
+}
+
+/* ------------------------------------------------------------------ stats */
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.stat {
+  position: relative;
+  overflow: hidden;
+  padding: 18px 20px;
+}
+.stat::before {
+  content: '';
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--grad);
+}
+.stat .num {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.stat .lbl {
+  margin-top: 2px;
+  color: var(--ink-dim);
+  font-size: 12px;
+}
+.stat.c1 .num {
+  color: var(--warn);
+}
+.stat.c2 .num {
+  color: var(--info);
+}
+.stat.c3 .num {
+  color: var(--ok);
+}
+.stat.c4 .num {
+  color: var(--bad);
+}
+
+/* ------------------------------------------------------------------ forms */
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px var(--s5);
+  padding: 22px;
+}
+.grid .full {
+  grid-column: 1 / -1;
+}
+
+.field label,
+.field .label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.field .desc {
+  margin-top: 5px;
+  color: var(--ink-dim);
+  font-size: 12px;
+}
+.field .err {
+  margin-top: 5px;
+  color: var(--bad);
+  font-size: 12px;
+}
+
+/* Every text-like control, by exclusion rather than by listing types.
+ *
+ * The list version was `input[type='text'], input[type='password'], …`, and it
+ * missed the controls that have no type attribute at all — which is most of
+ * them, because `type="text"` is the default and writing it out is noise. An
+ * attribute selector does not match an absent attribute, so those inputs fell
+ * back to the browser's default width and sat at about 180px in the middle of a
+ * full-width form.
+ *
+ * Naming the two that are not text-like cannot go wrong the same way: a new
+ * input type is covered by default rather than forgotten. */
+input:not([type='checkbox']):not([type='radio']):not([type='file']),
+select,
+textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--input-bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: var(--ease);
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--ink-faint);
+}
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+input[aria-invalid='true'] {
+  border-color: var(--bad);
+}
+input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: 13px;
+  font-weight: 500;
+}
+.check input {
+  flex: none;
+}
+
+.form-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s4) 22px;
+  border-top: 1px solid var(--line);
+}
+
+/* ----------------------------------------------------------------- tables */
+
+.table-wrap {
+  overflow-x: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+th {
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-dim);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+td {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+}
+tbody tr:last-child td {
+  border-bottom: none;
+}
+tbody tr:hover {
+  background: var(--hover);
+}
+th.right,
+td.right {
+  text-align: right;
+}
+
+.tag {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.tag-mono {
+  background: var(--hover);
+  color: var(--ink-dim);
+  font-family: var(--mono);
+}
+.tag.on {
+  border: 1px solid var(--ok-line);
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+.tag.off {
+  background: var(--hover);
+  color: var(--ink-dim);
+}
+.tag.warn {
+  border: 1px solid var(--warn-line);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.tag.bad {
+  border: 1px solid var(--bad-line);
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+.tag.info {
+  border: 1px solid var(--info-line);
+  background: var(--info-soft);
+  color: var(--info);
+}
+
+/* ---------------------------------------------------------------- toolbar */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s3);
+  margin-bottom: var(--s5);
+  padding: 14px 18px;
+}
+.toolbar label {
+  color: var(--ink-dim);
+  font-size: 12px;
+  font-weight: 500;
+}
+.toolbar input,
+.toolbar select {
+  width: auto;
+  min-width: 120px;
+}
+
+/* --------------------------------------------------------------- messages */
+
+.flash {
+  margin-bottom: var(--s5);
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+.flash.ok {
+  border: 1px solid var(--ok-line);
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+.flash.bad {
+  border: 1px solid var(--bad-line);
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+/* ------------------------------------------------------------ arrangement */
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.spacer {
+  flex: 1;
+}
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s2);
+}
+
+.muted {
+  color: var(--ink-dim);
+}
+.small {
+  font-size: 12px;
+}
+.mono {
+  font-family: var(--mono);
+}
+
+pre.block {
+  overflow: auto;
+  margin: 0;
+  padding: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--code-bg);
+  color: var(--code-ink);
+  font-size: 13px;
+}
+
+/* ---------------------------------------------------------------- dialogs */
+
+/* The native <dialog> element, which is doing the work rather than being a
+ * container: showModal() gives the top layer, focus trapping and inertness of
+ * the page behind it. All that is left here is the appearance. */
+.dialog {
+  max-width: 560px;
+  width: calc(100vw - var(--s6));
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+.dialog::backdrop {
+  background: rgba(4, 6, 12, 0.55);
+  backdrop-filter: blur(2px);
+}
+:root[data-theme='light'] .dialog::backdrop {
+  background: rgba(16, 24, 40, 0.35);
+}
+
+.dialog-panel {
+  padding: var(--s5);
+}
+.dialog-panel h3 {
+  margin-bottom: var(--s3);
+  font-size: 16px;
+}
+.dialog-panel .field + .field {
+  margin-top: var(--s4);
+}
+.dialog-actions {
+  margin-top: var(--s5);
+}
+/* The one view of a value that is never stored. Selectable, monospace, and
+ * allowed to scroll sideways rather than wrap — a token broken across two lines
+ * is one somebody copies with a newline in the middle. */
+.dialog pre.block {
+  margin: var(--s3) 0 0;
+  white-space: pre;
+  word-break: normal;
+}
+
+/* ------------------------------------------------------------------- facts */
+
+/* A definition list as a two-column grid, for the pages that are one record
+ * rather than a table: a delivery's identifiers, timestamps and last error. */
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--s3) var(--s5);
+  margin: 0 0 var(--s5);
+  padding: var(--s5);
+}
+.facts dt {
+  color: var(--ink-dim);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.facts dd {
+  margin: 0;
+  min-width: 0;
+}
+.facts .wrap {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 700px) {
+  .facts {
+    grid-template-columns: 1fr;
+    gap: var(--s1) 0;
+  }
+  .facts dd {
+    margin-bottom: var(--s3);
+  }
+}
+
+/* --------------------------------------------------------------- sections */
+
+/* A heading inside a card, for the generated form's two blocks and the detail
+ * page's attempt history. */
+.section {
+  margin: var(--s5) 0 var(--s3);
+  padding: 0 22px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.section:first-child {
+  margin-top: 0;
+}
+.section-desc {
+  padding: 0 22px;
+}
+h2.section {
+  padding: 0;
+}
+
+/* A flash inside a card rather than above it, so it sits with the form it is
+ * about instead of at the top of a page that may be scrolled away from it. */
+.flash.inset {
+  margin: 0 22px var(--s4);
+  white-space: pre-line;
+}
+
+/* The required marker. On the label rather than on the control, because the
+ * control is generated and a conditional field's marker has to appear and
+ * disappear with it. */
+.req {
+  margin-left: 3px;
+  color: var(--bad);
+}
+
+.check.inline {
+  margin-top: var(--s2);
+  color: var(--ink-dim);
+  font-weight: 400;
+}
+
+/* -------------------------------------------------------------- api docs */
+
+/* The reference is the one page that is mostly prose, so it carries a small
+ * set of its own rather than stretching the general vocabulary. Section
+ * spacing lives here rather than in a style attribute per heading: twelve
+ * inline margins on one page is twelve places the rhythm can drift apart. */
+.docs h2 {
+  margin: var(--s6) 0 var(--s3);
+  font-size: 16px;
+}
+.docs h2:first-of-type {
+  margin-top: 0;
+}
+.docs .lede {
+  margin-bottom: var(--s3);
+  color: var(--ink-dim);
+  font-size: 12px;
+}
+.docs ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.creds {
+  margin-bottom: var(--s5);
+  padding: var(--s5);
+}
+.creds .grid {
+  padding: 0;
+  gap: var(--s3);
+}
+.creds .foot {
+  margin-top: var(--s4);
+  color: var(--ink-dim);
+  font-size: 12px;
+}
+.creds .foot p {
+  margin-bottom: var(--s2);
+}
+
+.notes {
+  margin-top: var(--s3);
+  padding: var(--s4) var(--s5);
+}
+
+.sample-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-bottom: var(--s2);
+}
+
+/* The sample tabs. A separate class from .langs even though the two look
+ * alike: the language switcher is a set of links that navigate, and these are
+ * buttons that swap a panel in place. Sharing one class meant sharing the
+ * anchor rules, which then had to be undone. */
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  width: fit-content;
+  margin-bottom: var(--s3);
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--hover);
+}
+.tabs button {
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--ease);
+}
+.tabs button:hover {
+  color: var(--ink);
+}
+.tabs button.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* ------------------------------------------------------------- responsive */
+
+@media (max-width: 900px) {
+  .side {
+    display: none;
+  }
+  .topbar {
+    left: 0;
+    padding: 0 var(--s4);
+  }
+  .content {
+    margin-left: 0;
+  }
+  main {
+    padding: calc(var(--top-height) + var(--s5)) var(--s4) var(--s5);
+  }
+  .grid,
+  .stats {
+    grid-template-columns: 1fr;
+  }
+}

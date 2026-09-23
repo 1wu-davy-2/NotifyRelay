@@ -60,6 +60,10 @@ var zh = Messages{
 	NavStart:      "上手",
 	NavLangSwitch: "语言",
 
+	NavThemeSwitch: "切换深色 / 浅色",
+	ThemeDark:      "深色",
+	ThemeLight:     "浅色",
+
 	// ----------------------------------------------------- page titles
 	TitleSignIn:     "登录",
 	TitleSetup:      "创建管理员",
@@ -405,6 +409,7 @@ var zh = Messages{
 	ErrPasswordInConfig:      "这个账号的密码写在配置文件里，不在这里改。改掉配置里的 admin.password_hash 并重启。",
 	ErrPasswordChangeFailed:  "密码修改失败",
 	ErrMissingCSRF:           "变更类请求必须带 %s 头",
+	ErrNotFound:              "没有这个接口",
 }
 
 // en is the English copy table.
@@ -462,6 +467,10 @@ var en = Messages{
 	NavSignOut:    "Sign out",
 	NavStart:      "Get started",
 	NavLangSwitch: "Language",
+
+	NavThemeSwitch: "Switch between dark and light",
+	ThemeDark:      "Dark",
+	ThemeLight:     "Light",
 
 	// ----------------------------------------------------- page titles
 	TitleSignIn:     "Sign in",
@@ -837,4 +846,5 @@ var en = Messages{
 	ErrPasswordInConfig:     "this account's password comes from the configuration file. Change admin.password_hash there and restart.",
 	ErrPasswordChangeFailed: "the password could not be changed",
 	ErrMissingCSRF:          "state-changing requests must carry the %s header",
+	ErrNotFound:             "no such endpoint",
 }

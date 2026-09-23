@@ -344,6 +344,12 @@ func (h *handler) resetBreaker(w http.ResponseWriter, r *http.Request) {
 
 type auditResponse struct {
 	Actions []auditView `json:"actions"`
+	// Enabled distinguishes "this deployment keeps no audit trail" from "it
+	// does, and nothing has happened yet". Both answer with an empty list, and
+	// telling them apart is the difference between a fact about the deployment
+	// and a fact about the operator's afternoon — which is why auditPage
+	// carries the same flag to its template.
+	Enabled bool `json:"enabled"`
 }
 
 type auditView struct {
@@ -357,7 +363,7 @@ type auditView struct {
 // listAudit implements GET /admin/api/audit.
 func (h *handler) listAudit(w http.ResponseWriter, r *http.Request) {
 	if h.deps.Audit == nil {
-		writeJSON(w, http.StatusOK, auditResponse{})
+		writeJSON(w, http.StatusOK, auditResponse{Actions: []auditView{}, Enabled: false})
 		return
 	}
 
@@ -372,7 +378,7 @@ func (h *handler) listAudit(w http.ResponseWriter, r *http.Request) {
 	for _, a := range actions {
 		out = append(out, auditView{At: a.At, Actor: a.Actor, Action: a.Action, Target: a.Target, Detail: a.Detail})
 	}
-	writeJSON(w, http.StatusOK, auditResponse{Actions: out})
+	writeJSON(w, http.StatusOK, auditResponse{Actions: out, Enabled: true})
 }
 
 // ------------------------------------------------------------------ helpers

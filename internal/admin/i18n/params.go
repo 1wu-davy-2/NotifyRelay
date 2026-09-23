@@ -1,9 +1,12 @@
 package i18n
 
 // ParamCopy is one channel parameter's label and description in one language.
+//
+// Tagged for JSON as well as read by the templates, because the client-side
+// form reads the same table over /admin/api/i18n — see the note on Params.
 type ParamCopy struct {
-	Label string
-	Desc  string
+	Label string `json:"label"`
+	Desc  string `json:"desc"`
 }
 
 // ParamKey names a parameter in the copy tables: the channel type, a dot, the

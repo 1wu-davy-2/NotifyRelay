@@ -13,11 +13,6 @@ type passwordRequest struct {
 	New     string `json:"new_password"`
 }
 
-// passwordPage implements GET /admin/password.
-func (h *handler) passwordPage(w http.ResponseWriter, r *http.Request, actor string) {
-	h.render(w, r, "password.html", h.pageBase(r, actor, "password"))
-}
-
 // changePassword implements POST /admin/api/password.
 //
 // There was no way to change this password at all. The only routes were editing

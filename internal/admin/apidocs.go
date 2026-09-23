@@ -58,11 +58,14 @@ type apiDocEndpoint struct {
 
 // apiDocRow is one endpoint as the page renders it: one language, already
 // chosen, and no second column to pick from.
+//
+// Tagged for JSON as well as read by the template, because the client-side
+// reference renders the same table and gets it from here.
 type apiDocRow struct {
-	Method  string
-	Path    string
-	Auth    string // empty when the endpoint takes no credential
-	Purpose string
+	Method  string `json:"method"`
+	Path    string `json:"path"`
+	Auth    string `json:"auth,omitempty"` // empty when the endpoint takes no credential
+	Purpose string `json:"purpose"`
 }
 
 // apiDocError is one row of the error-code table, in both languages. Same
@@ -74,11 +77,12 @@ type apiDocError struct {
 	En     string
 }
 
-// apiDocErrorRow is one error as the page renders it.
+// apiDocErrorRow is one error as the page renders it. Tagged for the same
+// reason as apiDocRow.
 type apiDocErrorRow struct {
-	Code    string
-	Status  string
-	Meaning string
+	Code    string `json:"code"`
+	Status  string `json:"status"`
+	Meaning string `json:"meaning"`
 }
 
 // sampleFiles is the tab order. Fixed rather than sorted: curl first because
@@ -228,44 +232,57 @@ func errorsIn(l i18n.Lang) []apiDocErrorRow {
 	return out
 }
 
-// apiDocsPage implements GET /admin/api-docs.
-func (h *handler) apiDocsPage(w http.ResponseWriter, r *http.Request, actor string) {
-	base := h.pageBase(r, actor, "api-docs")
+// The reference, as the page at /admin/api-docs reads it.
+//
+// Every field is derived by a named function — endpointsIn, errorsIn,
+// sampleNote, apiBaseURL — rather than assembled inline, so that the tables and
+// the sample files are the only places a new endpoint or error code has to be
+// added. The page renders what this answers and adds no content of its own.
+type apiDocsJSONResponse struct {
+	BaseURL string `json:"base_url"`
+	// Secure is whether the operator's own connection to this page is TLS. If
+	// it is not, the token they are about to copy into a script will cross the
+	// network in the clear — worth saying on the page rather than in a document
+	// nobody opens.
+	Secure    bool              `json:"secure"`
+	Samples   []apiDocSampleRow `json:"samples"`
+	Endpoints []apiDocRow       `json:"endpoints"`
+	Errors    []apiDocErrorRow  `json:"errors"`
+}
 
-	// The table and the language come from pageBase's single resolution, so the
-	// rows and the shell around them cannot disagree about which language this
-	// is. The page used to resolve the query parameter a second time, which
-	// also meant the cookie was ignored here and nowhere else.
-	t, lang := base.T, base.Lang
+type apiDocSampleRow struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Note  string `json:"note,omitempty"`
+	Body  string `json:"body"`
+}
 
+// apiDocsJSON implements GET /admin/api/api-docs.
+//
+// Registered under /api/ rather than beside the page at /admin/api-docs,
+// because everything under /api/ answers JSON and this does too — the page is
+// the exception, and it is documented as one.
+func (h *handler) apiDocsJSON(w http.ResponseWriter, r *http.Request) {
+	t := copyFor(r)
+	lang := langFrom(r.Context())
 	baseURL := apiBaseURL(r)
 
-	samples := make([]apiDocSample, 0, len(sampleFiles))
+	samples := make([]apiDocSampleRow, 0, len(sampleFiles))
 	for _, s := range apiSamples[lang] {
-		s.Body = strings.ReplaceAll(s.Body, "{{BASE_URL}}", baseURL)
-		s.Note = sampleNote(t, s)
-		samples = append(samples, s)
+		samples = append(samples, apiDocSampleRow{
+			ID:    s.ID,
+			Label: s.Label,
+			Note:  sampleNote(t, s),
+			Body:  strings.ReplaceAll(s.Body, "{{BASE_URL}}", baseURL),
+		})
 	}
 
-	h.render(w, r, "apidocs.html", struct {
-		pageData
-		BaseURL string
-		Samples []apiDocSample
-		// The two tables, one language's column already selected.
-		Endpoints []apiDocRow
-		Errors    []apiDocErrorRow
-		// Secure says whether the operator's own connection to this page is
-		// TLS. If it is not, the token they are about to copy into a script
-		// will cross the network in the clear, and that is worth saying on the
-		// page rather than in a document nobody opens.
-		Secure bool
-	}{
-		pageData:  base,
+	writeJSON(w, http.StatusOK, apiDocsJSONResponse{
 		BaseURL:   baseURL,
+		Secure:    cookieSecure(r),
 		Samples:   samples,
 		Endpoints: endpointsIn(lang),
 		Errors:    errorsIn(lang),
-		Secure:    cookieSecure(r),
 	})
 }
 

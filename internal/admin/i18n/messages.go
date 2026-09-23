@@ -38,6 +38,15 @@ type Messages struct {
 	NavLangSwitch string // accessible label for the language switcher
 	NavStart      string // the first-run checklist, offered only while it is unfinished
 
+	// The theme switch, which only the client-side interface has. The
+	// server-rendered pages are dark and nothing else, so these are the first
+	// strings in the table that nothing in the templates reads — they are here
+	// rather than in the frontend for the reason the whole table is: a sentence
+	// belongs in one place, and this is it.
+	NavThemeSwitch string // accessible label for the switch
+	ThemeDark      string // the theme's name while it is dark
+	ThemeLight     string // the theme's name while it is light
+
 	// ---------------------------------------------------------- page titles
 
 	// Separate from the navigation labels because a nav item and a page heading
@@ -391,6 +400,14 @@ type Messages struct {
 	ErrPasswordInConfig      string
 	ErrPasswordChangeFailed  string
 	ErrMissingCSRF           string // %s: the header's name
+
+	// ErrNotFound answers a path under /api that no route matched.
+	//
+	// The interface reaches it by asking for something that is not there, which
+	// is a bug in the interface rather than in the request — and it renders
+	// whatever comes back, so an English sentence would surface to a Chinese
+	// operator. Translated for that reason and not because a stranger reads it.
+	ErrNotFound string
 }
 
 // Script holds the strings app.js shows: the confirms, the alerts, the one

@@ -463,6 +463,11 @@ the message back to the upstream MTA, answering 451 so the upstream retries.
 
 ```
 cmd/notifyrelay/         the binary: flags, wiring, signals, reload
+web/                     the admin interface (React + Vite). Its build output is
+                         embedded into the binary by web/embed.go
+  web/src/pages/         the screens; the route table is web/src/App.tsx
+  web/src/lib/schema.ts  the channel form: the only form logic that is the browser's
+  web/scripts/           generates TypeScript types from the Go copy table
 internal/
   api/                   POST /api/v1/notify, /messages, /channels
   smtpin/                SMTP inbound; recipient address as routing instruction
@@ -489,9 +494,8 @@ internal/
                          password change, the API reference page
   admin/i18n/            the interface copy table, one per language. A **struct, not a
                          map** — a missing translation is a compile error
-  admin/templates/       page templates, parsed once per language because the
-                         relative-time and timestamp functions cannot reach the request
   admin/samples/         the worked examples, one directory per language
+  admin/static/          the stylesheet the "frontend not built" page borrows
   config/                the configuration file, and the channel store that lives in the database
   secret/                sealing individual credential values at rest
   metrics/               Prometheus instrumentation
@@ -761,6 +765,21 @@ make helm-lint                 # render the chart without a cluster
 
 The build **pins `GOARCH=amd64` explicitly** rather than inheriting it: a 32-bit
 host toolchain would otherwise produce a 32-bit binary.
+
+**The admin interface has to be built before the binary is.** It is a React
+project, and its output is embedded into the binary by `web/embed.go` with
+`//go:embed`:
+
+```bash
+cd web && npm install && npm run build
+cd .. && go build ./...
+```
+
+The build scripts deliberately do **not** run that for you: `go build ./...` has
+to keep working in a checkout with no Node toolchain, and this repository's
+backend has no use for one. The cost is that a binary built that way has no
+interface — `/admin` answers with a page naming the two commands above, rather
+than a blank screen.
 
 Run the tests:
 

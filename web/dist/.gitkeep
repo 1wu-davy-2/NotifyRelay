@@ -1,0 +1,3 @@
+Placeholder so //go:embed all:dist matches something in a checkout where
+npm run build has not been run. See web/embed.go and internal/admin/spa.go.
+Recreated by the keepEmbedPlaceholder plugin in vite.config.ts.

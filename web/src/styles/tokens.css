@@ -1,0 +1,191 @@
+/* The design tokens, in both themes.
+ *
+ * Everything the interface draws is built from these, so a component that uses
+ * them looks like the rest of the interface and a component that reaches past
+ * them is visible as the odd one out.
+ *
+ * ---------------------------------------------------------------------------
+ * Why two blocks and not one block plus an override.
+ *
+ * The obvious shape is a :root with the dark values and a [data-theme=light]
+ * block that overrides the ones that differ. It is fewer lines and it is wrong:
+ * a token added to the dark block and forgotten in the light one keeps its dark
+ * value in light mode, and nothing fails — it renders, in the wrong colour, on
+ * a page nobody opens in the other theme.
+ *
+ * So both blocks are complete and neither is an override. A token missing from
+ * one of them is a token that does not resolve, which is loud, immediate, and
+ * in every theme at once. The duplication is the mechanism.
+ * ---------------------------------------------------------------------------
+ *
+ * Naming is semantic rather than literal: --ok, not --green. The same green is
+ * wrong in both themes — it has to be legible on #0a0c12 and on #ffffff, and
+ * those are two different greens. A token named for its hue is a token somebody
+ * reuses for a heading because it looks nice, and that is how a success colour
+ * ends up meaning nothing.
+ */
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* Three surfaces, not two. The page, a card on it, and something raised
+   * above a card — a hovered row, a menu, a dialog. With only a background and
+   * a panel, a panel inside a panel has nowhere to go and the interface reads
+   * as flat. */
+  --bg: #0a0c12;
+  --surface: #11141c;
+  --raised: #1a1f2b;
+  --sidebar: rgba(13, 16, 24, 0.85);
+  --hover: rgba(255, 255, 255, 0.05);
+
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.16);
+
+  --ink: #e8eaf2;
+  --ink-dim: #8b91a5;
+  --ink-faint: #616779;
+
+  --accent: #818cf8;
+  --accent-ink: #0a0c12;
+  --accent-soft: rgba(129, 140, 248, 0.16);
+  --accent-line: rgba(129, 140, 248, 0.25);
+
+  --ok: #34d399;
+  --ok-soft: rgba(52, 211, 153, 0.12);
+  --ok-line: rgba(52, 211, 153, 0.25);
+
+  --warn: #fbbf24;
+  --warn-soft: rgba(251, 191, 36, 0.12);
+  --warn-line: rgba(251, 191, 36, 0.25);
+
+  --bad: #f87171;
+  --bad-soft: rgba(248, 113, 113, 0.12);
+  --bad-line: rgba(248, 113, 113, 0.25);
+
+  --info: #22d3ee;
+  --info-soft: rgba(34, 211, 238, 0.12);
+  --info-line: rgba(34, 211, 238, 0.25);
+
+  --grad: linear-gradient(120deg, #818cf8, #22d3ee);
+  --active-nav: linear-gradient(120deg, rgba(129, 140, 248, 0.16), rgba(34, 211, 238, 0.1));
+  --glow: 0 0 18px rgba(99, 102, 241, 0.45);
+  --shadow: none;
+
+  --input-bg: rgba(0, 0, 0, 0.3);
+  --code-bg: rgba(0, 0, 0, 0.35);
+  --code-ink: #a5f3fc;
+
+  /* The page wash. Two soft radial gradients behind everything, which is what
+   * keeps a large dark surface from reading as a flat rectangle. Zeroed in
+   * light, where the same effect is a smudge. */
+  --wash-1: rgba(99, 102, 241, 0.14);
+  --wash-2: rgba(34, 211, 238, 0.08);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --raised: #f3f4f6;
+  --sidebar: #ffffff;
+  --hover: #f3f4f6;
+
+  --line: #e6e8ec;
+  --line-strong: #d3d7de;
+
+  --ink: #181c25;
+  --ink-dim: #6b7280;
+  --ink-faint: #9aa1ad;
+
+  --accent: #4f46e5;
+  --accent-ink: #ffffff;
+  --accent-soft: #eef2ff;
+  --accent-line: #c7d2fe;
+
+  --ok: #059669;
+  --ok-soft: #ecfdf5;
+  --ok-line: #a7f3d0;
+
+  --warn: #b45309;
+  --warn-soft: #fffbeb;
+  --warn-line: #fde68a;
+
+  --bad: #dc2626;
+  --bad-soft: #fef2f2;
+  --bad-line: #fecaca;
+
+  --info: #0891b2;
+  --info-soft: #ecfeff;
+  --info-line: #a5f3fc;
+
+  --grad: linear-gradient(135deg, #6366f1, #4338ca);
+  --active-nav: #eef2ff;
+  --glow: none;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.06);
+
+  --input-bg: #ffffff;
+  --code-bg: #fafbfc;
+  --code-ink: #0e7490;
+
+  --wash-1: rgba(99, 102, 241, 0.06);
+  --wash-2: rgba(34, 211, 238, 0.04);
+}
+
+/* Theme-independent tokens.
+ *
+ * Spacing is on a 4px base. The alternative — bare pixel values at each use
+ * site — is how a page ends up with 7px here and 9px there and no way to tell
+ * whether the difference was meant. */
+:root {
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 44px;
+
+  --radius: 14px;
+  --radius-sm: 9px;
+  --radius-xs: 7px;
+
+  --side-width: 236px;
+  --top-height: 58px;
+
+  /* The CJK families are listed explicitly and that is the point. This was
+   * once one monospace stack for the whole interface, and none of those fonts
+   * has a Chinese glyph — so Chinese fell back to whatever the system picked,
+   * at a different weight and height, inside the same line as the Latin text.
+   * Naming the families is what makes the fallback ours. */
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Source Han Sans SC', 'Noto Sans CJK SC', sans-serif;
+  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono',
+    'Sarasa Mono SC', 'Noto Sans Mono CJK SC', monospace;
+
+  --ease: 0.15s ease;
+}
+
+/* The page colour before any theme is applied.
+ *
+ * `data-theme` is always present — the server writes it as it serves the shell,
+ * and index.html carries the default for `npm run dev`, where no server is
+ * involved. This rule is the backstop for the one case neither covers: a
+ * document with the attribute stripped, or a build served by something other
+ * than this project's Go process. Without it the body falls back to the
+ * browser's white, which on a dark deployment is a full-screen flash.
+ *
+ * The value is the dark theme's, because dark is the default and therefore the
+ * likelier answer for a page that has lost the attribute. */
+html {
+  background: #0a0c12;
+}
+
+/* What the operator sees if the bundle never runs. Styled rather than left as
+ * browser default text: it appears on a dark page, and black-on-transparent is
+ * unreadable against it. */
+.noscript {
+  padding: var(--s6);
+  font: 14px/1.7 var(--font);
+  color: var(--ink);
+}

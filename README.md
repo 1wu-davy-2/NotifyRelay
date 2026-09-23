@@ -397,6 +397,10 @@ worker 卡死、机器掉电都能被同一套扫描兜住——代价是**一�
 
 ```
 cmd/notifyrelay/         二进制：命令行参数、装配、信号、热加载
+web/                     管理界面（React + Vite）。构建产物由 web/embed.go 嵌进二进制
+  web/src/pages/         页面；路由表在 web/src/App.tsx
+  web/src/lib/schema.ts  通道表单：唯一一段属于浏览器的表单逻辑
+  web/scripts/           从 Go 的文案表生成 TypeScript 类型
 internal/
   api/                   POST /api/v1/notify、/messages、/channels
   smtpin/                SMTP 入口；收件人地址即路由指令
@@ -421,8 +425,8 @@ internal/
   admin/                 管理 API 与后台：会话、通道增删改查、重置熔断、重放、
                          发测试通知、上手清单、改密码、API 参考页
   admin/i18n/            界面文案表。中英各一份，**结构体不是 map**——漏翻是编译错误
-  admin/templates/       页面模板（中英各解析一份，因为 since/stamp 拿不到请求的语言）
   admin/samples/         七种语言的调用示例，按语言分目录
+  admin/static/          未构建前端时那张提示页借用的样式表
   config/                配置文件，以及住在数据库里的那份渠道配置
   secret/                逐字段密封凭据
   metrics/               Prometheus 埋点
@@ -644,6 +648,18 @@ make helm-lint                 # 不需要集群就能渲染 chart
 
 构建脚本**显式固定 `GOARCH=amd64`**，不继承宿主默认值——在 32 位工具链上开发时，
 不固定就会产出 32 位二进制。
+
+**管理界面要先构建，再构建二进制。** 它是一个 React 工程，产物由 `web/embed.go`
+用 `//go:embed` 嵌进二进制：
+
+```bash
+cd web && npm install && npm run build
+cd .. && go build ./...
+```
+
+构建脚本**不**替你跑这一步，是有意的：`go build ./...` 必须在没有 Node 工具链的
+checkout 里照样能过，而这个仓库的后端不需要 Node。代价是那样构建出来的二进制没有
+界面——访问 `/admin` 会得到一张写清楚要跑哪两条命令的页面，而不是白屏。
 
 跑测试：
 

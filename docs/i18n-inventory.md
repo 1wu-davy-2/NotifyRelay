@@ -10,6 +10,11 @@
 > `KeyRecipientsSaved` 等）不在这份清单里，行号也会随代码漂移。**唯一的真相是
 > `internal/admin/i18n/messages.go` 的结构体**——编译器与
 > `i18n_test.go` 保证两张表都没有漏项，这份文档保证不了。
+>
+> **M5.4 补记**：下表的"文件"一列已经不存在了。界面迁到 React 之后
+> `internal/admin/templates/` 与 `static/app.js` 一并删除，文案本身一条没少——
+> 表还是那张表，只是改由 `GET /admin/api/i18n` 发给前端。
+> 清点结果保留原样，因为它记录的是当时做了什么。
 
 ---
 

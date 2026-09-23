@@ -84,16 +84,39 @@ func (h *handler) onboarding(r *http.Request) Onboarding {
 	return out
 }
 
-// startPage implements GET /admin/start.
+// onboardingResponse is the checklist's state, as the client-side interface
+// reads it.
 //
-// The first-run setup lands here rather than on the channel list, because the
-// channel list is a page for somebody who already knows what this service is.
-func (h *handler) startPage(w http.ResponseWriter, r *http.Request, actor string) {
-	h.render(w, r, "start.html", struct {
-		pageData
-		Steps Onboarding
-	}{
-		pageData: h.pageBase(r, actor, "start"),
-		Steps:    h.onboarding(r),
+// A separate type rather than JSON tags on Onboarding, because that struct's
+// four fields are the whole state and these six are a projection of it: Done
+// and Remaining are methods there, and a client left to derive them from the
+// booleans would be a second copy of the rule deciding what counts as finished.
+// The arithmetic is trivial; the reason to send it is that the day a fifth step
+// is added, the rule changes in one place.
+type onboardingResponse struct {
+	HasChannel  bool `json:"has_channel"`
+	HasKey      bool `json:"has_key"`
+	HasDelivery bool `json:"has_delivery"`
+	HasResult   bool `json:"has_result"`
+	Done        bool `json:"done"`
+	Remaining   int  `json:"remaining"`
+}
+
+// onboardingJSON implements GET /admin/api/onboarding.
+//
+// The client-side interface needs this on every page, because the navigation
+// offers the checklist only while something is left to do — the same reason the
+// server-rendered shell computes it on every render. It is one endpoint rather
+// than three (channels, keys, stats) so that the derivation above stays in one
+// place and the page makes one request instead of three.
+func (h *handler) onboardingJSON(w http.ResponseWriter, r *http.Request) {
+	o := h.onboarding(r)
+	writeJSON(w, http.StatusOK, onboardingResponse{
+		HasChannel:  o.HasChannel,
+		HasKey:      o.HasKey,
+		HasDelivery: o.HasDelivery,
+		HasResult:   o.HasResult,
+		Done:        o.Done(),
+		Remaining:   o.Remaining(),
 	})
 }

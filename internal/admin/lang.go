@@ -148,35 +148,3 @@ func stripLangParam(raw string) string {
 	}
 	return "?" + values.Encode()
 }
-
-// langOption is one entry in the switcher.
-type langOption struct {
-	Tag   string
-	Label string
-	Href  string
-	On    bool
-}
-
-// langOptions builds the switcher for the page being rendered.
-//
-// The link points back at the page the reader is on, so choosing a language
-// does not also navigate them somewhere else — the two are separate decisions
-// and coupling them is how a reader loses their place.
-//
-// The current URL is rebuilt from the request rather than taken from a Referer
-// header: that header is absent on a first visit and attacker-controlled on
-// every other one.
-func langOptions(r *http.Request, current i18n.Lang) []langOption {
-	to := path.Clean(r.URL.Path) + stripLangParam(r.URL.RawQuery)
-
-	out := make([]langOption, 0, len(i18n.Langs))
-	for _, l := range i18n.Langs {
-		out = append(out, langOption{
-			Tag:   string(l),
-			Label: l.Name(),
-			Href:  "/admin/lang/" + string(l) + "?to=" + url.QueryEscape(to),
-			On:    l == current,
-		})
-	}
-	return out
-}

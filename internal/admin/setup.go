@@ -78,27 +78,60 @@ func (h *handler) setupRequired(ctx context.Context) (bool, error) {
 	return credential == nil, nil
 }
 
-// setupPage implements GET /admin/setup.
-func (h *handler) setupPage(w http.ResponseWriter, r *http.Request) {
+// setupStatusResponse is what GET /admin/api/setup answers.
+type setupStatusResponse struct {
+	Required bool `json:"required"`
+
+	// MinPasswordLength is the floor the server enforces, sent rather than
+	// written down again in the client.
+	//
+	// It is here because the alternative was three copies of the number in
+	// three places — this constant, the message that names it, and the form's
+	// own minlength — and a browser that waves through a password the server
+	// then refuses reads as a bug in whichever of the two the operator happened
+	// to believe. Sending it makes the form's copy derived rather than
+	// remembered.
+	//
+	// The password-change form is not covered by this and cannot be: it is
+	// behind a session, and a client that had to ask before it could draw a
+	// field would be a form that appears a round trip late. Its floor is the
+	// same constant, and the test that pins it lives in password_test.go.
+	MinPasswordLength int `json:"min_password_length"`
+}
+
+// setupStatus implements GET /admin/api/setup.
+//
+// ---------------------------------------------------------------------------
+// It exists because the sign-in screen is client-side and has to know which of
+// the two forms to draw before it has a session to ask with. The server used to
+// answer that question with a redirect: every page handler checked setupRequired
+// first and sent an unclaimed deployment to /admin/setup. That check has moved
+// into the client, so the client needs the fact rather than the redirect.
+//
+// Public, and it has to be — it is the question an anonymous visitor asks. It
+// discloses one bit: whether this deployment has an administrator yet. That bit
+// is already public in the strongest sense, because the first-run form it
+// controls is reachable by whoever asks first; the whole design of first-run
+// setup accepts that window and bounds it by closing the form the moment an
+// account exists. See the note at the top of this file.
+//
+// It reports the answer and nothing about how it was reached, so a store that
+// cannot be read is a 500 with no body — see below. Answering false there would
+// be the dangerous direction: false means "sign in", and there is nothing to
+// sign in to.
+// ---------------------------------------------------------------------------
+func (h *handler) setupStatus(w http.ResponseWriter, r *http.Request) {
 	required, err := h.setupRequired(r.Context())
 	if err != nil {
 		h.log.Error("admin: could not tell whether setup is needed", slog.String("error", err.Error()))
-		data := h.pageBase(r, "", "setup")
-		data.Error = data.T.ErrAdminUnreadable
-		data.Back, data.BackLabel = backFor(data.T, "setup")
-		h.render(w, r, "error.html", data)
+		writeError(w, http.StatusInternalServerError, "internal", copyFor(r).ErrAdminUnreadable)
 		return
 	}
 
-	// Once an administrator exists this page is gone, not merely inert. A form
-	// that is still reachable after it stops working is a form somebody will
-	// eventually try to use.
-	if !required {
-		http.Redirect(w, r, "/admin/login", http.StatusFound)
-		return
-	}
-
-	h.render(w, r, "setup.html", h.pageBase(r, "", "setup"))
+	writeJSON(w, http.StatusOK, setupStatusResponse{
+		Required:          required,
+		MinPasswordLength: minPasswordLength,
+	})
 }
 
 // createAdministrator implements POST /admin/api/setup.

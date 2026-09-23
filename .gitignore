@@ -20,3 +20,11 @@
 *.swp
 .DS_Store
 Thumbs.db
+
+# Built frontend. dist/ is produced by `npm run build` and embedded into the
+# binary at compile time (web/embed.go); it is not source and is not committed.
+# The placeholder stays so that //go:embed has something to match in a checkout
+# where the frontend has never been built.
+/web/dist/*
+!/web/dist/.gitkeep
+/web/node_modules/

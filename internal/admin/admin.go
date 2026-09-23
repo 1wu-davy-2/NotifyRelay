@@ -145,56 +145,90 @@ func NewHandler(d Deps) http.Handler {
 		log.Error("admin: the operator UI has no stylesheet", slog.String("error", err.Error()))
 	}
 
-	r.Get("/login", h.loginPage)
+	// The built frontend, at every page path under /admin. It is the interface
+	// now — there is no second one behind it. See the note in spa.go for why
+	// none of this is behind a session check, which the sign-in page in
+	// particular could not be.
+	registerSPA(r)
+
+	// Signing in and signing up, both outside the session group.
+	//
+	// Signing in obviously: there is nothing to authenticate against yet. Signing
+	// up for the same reason — the account the first-run form creates is the one
+	// every later request is checked against, so it cannot itself require one.
+	// Both close themselves: sign-in against a hash or a stored credential, and
+	// first-run against the row it creates.
 	r.Post("/api/login", h.login)
 	r.Post("/api/logout", h.logout)
-
-	// First run. Outside the session group because there is nothing to
-	// authenticate against yet — the account this creates is the one every
-	// other route checks for. It closes itself the moment one exists.
-	r.Get("/setup", h.setupPage)
+	r.Get("/api/setup", h.setupStatus)
 	r.Post("/api/setup", h.createAdministrator)
 
-	// Pages redirect to the sign-in form rather than answering 401: a browser
-	// renders a JSON error as a blank page, and "sign in first" is not an
-	// answer to "why is this page empty".
-	r.Group(func(pr chi.Router) {
-		// Session-checked like the rest, so an unauthenticated visitor lands on
-		// the sign-in form rather than being bounced through a redirect chain
-		// that ends there anyway.
-		pr.Get("/", h.pageHandler(func(w http.ResponseWriter, r *http.Request, _ string) {
-			http.Redirect(w, r, "/admin/channels", http.StatusFound)
-		}))
-		// The four steps from a fresh deployment to a notification that has
-		// actually arrived. The first-run setup lands here; the navigation
-		// offers it until the last step is done.
-		pr.Get("/start", h.pageHandler(h.startPage))
+	// The copy table, and the only one of the client's three read endpoints that
+	// is not behind a session.
+	//
+	// It has to be reachable signed-out, because the sign-in page is client-side
+	// and every word on it — the two field labels, the button, the language
+	// names — comes from this table. The alternative was a second, smaller table
+	// in TypeScript for the four screens that render before a session exists,
+	// which is the duplication the i18n package exists to prevent.
+	//
+	// What that costs is that a stranger can read four hundred sentences naming
+	// this service's features. They can also reach the sign-in page, which names
+	// the service. Nothing here is a credential, a hostname or an account, and
+	// the two endpoints that do describe the deployment — /api/api-docs with its
+	// list of every endpoint, and /api/onboarding with its checklist — are still
+	// behind the session check below.
+	r.Get("/api/i18n", h.i18nJSON)
 
-		pr.Get("/channels", h.pageHandler(h.channelsPage))
-		pr.Get("/deliveries", h.pageHandler(h.deliveriesPage))
-		pr.Get("/deliveries/{id}", h.pageHandler(h.deliveryPage))
-		pr.Get("/audit", h.pageHandler(h.auditPage))
-		pr.Get("/keys", h.pageHandler(h.keysPage))
-
-		// A page, not JSON, so it belongs in this group: an operator who is not
-		// signed in should land on the sign-in form rather than on a blank page
-		// with a 401 in it.
-		//
-		// Registered at /api-docs rather than under /api/ because everything
-		// under /api/ answers JSON, and a page that returned HTML from there
-		// would be the one exception somebody has to remember.
-		pr.Get("/api-docs", h.pageHandler(h.apiDocsPage))
-
-		pr.Get("/password", h.pageHandler(h.passwordPage))
-	})
+	// Anything else under /api that no route matched, answered as JSON.
+	//
+	// Registered before the session group and matched after every route in it,
+	// because it is a fallback and not a gate. Without it the client-side
+	// interface's own catch-all would serve the shell for /api/typo — an HTML
+	// page with a 200 in it, which a caller parsing JSON reports as "the server
+	// is broken" rather than as "that endpoint does not exist".
+	//
+	// Two registrations, and the bare one is not redundant: chi keeps a
+	// wildcard's pattern as the prefix that precedes the asterisk, so "/api/*"
+	// is a node for "/api/" and a request for "/api" never reaches it. Without
+	// the second line the bare path is served the shell — the same failure as
+	// above, at the one address a caller is most likely to try by hand.
+	r.HandleFunc("/api", h.apiNotFound)
+	r.HandleFunc("/api/*", h.apiNotFound)
 
 	r.Group(func(pr chi.Router) {
 		pr.Use(h.requireSession)
 
 		pr.Get("/api/session", h.whoami)
 
+		// The first-run checklist's state. The navigation offers the checklist
+		// only while something is left to do, so the shell asks for this on
+		// every page — see onboardingJSON.
+		pr.Get("/api/onboarding", h.onboardingJSON)
+
+		// The API reference, for the page at /admin/api-docs.
+		//
+		// The content — fourteen endpoints, nine error codes, seven samples —
+		// comes from the same functions that generate the sample files, rather
+		// than from a second copy written for the page. This endpoint is also
+		// why the page is behind a session while the copy table is not: it lists
+		// every route this service has.
+		pr.Get("/api/api-docs", h.apiDocsJSON)
+
 		pr.Get("/api/channels", h.listChannels)
 		pr.Get("/api/channels/types", h.channelTypes)
+
+		// The generated form. `?name=` selects what is being edited; absent
+		// means a create.
+		//
+		// Not /api/channels/form, which is where it reads like it belongs. A
+		// channel is named by an operator and `form` is a name somebody could
+		// pick; under /api/channels/ the two would collide, and the loser would
+		// be the channel — a literal segment beats a parameter in chi, so
+		// /api/channels/form would answer with a form and getChannel would be
+		// unreachable for that one name. One segment further out, there is
+		// nothing to collide with.
+		pr.Get("/api/channel-form", h.channelFormJSON)
 		pr.Post("/api/channels", h.saveChannel)
 		pr.Get("/api/channels/{name}", h.getChannel)
 		pr.Delete("/api/channels/{name}", h.deleteChannel)
@@ -330,6 +364,11 @@ type errorBody struct {
 
 func writeError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, errorBody{Error: code, Message: message})
+}
+
+// apiNotFound implements the fallback under /api. See the route table.
+func (h *handler) apiNotFound(w http.ResponseWriter, r *http.Request) {
+	writeError(w, http.StatusNotFound, "not_found", copyFor(r).ErrNotFound)
 }
 
 // decode reads a JSON body with the limits a request from a browser needs.

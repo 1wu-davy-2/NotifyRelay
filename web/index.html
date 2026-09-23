@@ -1,0 +1,44 @@
+<!doctype html>
+<!--
+  The shell the Go process hands out for every page route under /admin.
+  Vite rewrites the script and link tags at build time; everything else here is
+  what the browser has before the bundle runs.
+
+  The `lang` and `data-theme` values below are defaults that the server
+  overwrites as it serves this file — see applyPreferences in
+  internal/admin/spa.go. Both are known at request time (the language from the
+  same cookie every page reads, the theme from one the interface writes), and
+  filling them in here is what keeps the page from:
+
+    * flashing the wrong background before the bundle runs, which is normally
+      prevented by an inline script and cannot be here — the CSP is
+      `script-src 'self'` with no 'unsafe-inline', and an inline script is
+      exactly what it forbids;
+    * announcing English content with a Chinese voice, because `lang="zh-CN"`
+      was hardcoded and only the markup was translated.
+
+  They are written as real values rather than as %PLACEHOLDERS% so that
+  `npm run dev` — which serves this file straight from Vite, with no Go process
+  in front of it — gets the correct defaults instead of a broken attribute.
+-->
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="/admin/favicon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#0a0c12" />
+    <title>信使中枢</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- No inline style: `style-src 'self'` with no 'unsafe-inline' blocks a
+         style attribute in the markup, so this would have rendered as unstyled
+         black-on-white text in exactly the situation it exists for. -->
+    <noscript class="noscript">
+      管理界面需要 JavaScript。请启用后刷新。
+      <br />
+      The admin interface requires JavaScript. Enable it and reload.
+    </noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

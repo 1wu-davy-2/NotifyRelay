@@ -89,28 +89,6 @@ func (req saveKeyRequest) allowedRecipients(t *i18n.Messages) ([]string, bool, s
 	return *req.AllowedRecipients, true, ""
 }
 
-// keysPage implements GET /admin/keys.
-func (h *handler) keysPage(w http.ResponseWriter, r *http.Request, actor string) {
-	views, err := h.keyViews(r)
-	if err != nil {
-		h.renderError(w, r, actor, "keys", copyFor(r).ErrKeysUnreadable, err)
-		return
-	}
-
-	h.render(w, r, "keys.html", struct {
-		pageData
-		Keys []keyView
-		// Configured is how many keys come from the configuration file. Shown
-		// because those cannot be deleted here, and a list that silently omits
-		// the reason is a list somebody will try to edit.
-		Configured int
-	}{
-		pageData:   h.pageBase(r, actor, "keys"),
-		Keys:       views,
-		Configured: len(h.configuredKeyNames()),
-	})
-}
-
 // listKeys implements GET /admin/api/keys.
 func (h *handler) listKeys(w http.ResponseWriter, r *http.Request) {
 	t := copyFor(r)
