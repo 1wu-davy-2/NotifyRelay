@@ -139,7 +139,7 @@ func TestSend_CardPayload(t *testing.T) {
 		return map[string]any{"webhook_url": url}
 	})
 
-	if res := ch.Send(context.Background(), sampleMessage()); res.Class != channel.ClassSent {
+	if res := ch.Send(context.Background(), sampleMessage(), channel.Target{}); res.Class != channel.ClassSent {
 		t.Fatalf("class = %v (%v)", res.Class, res.Err)
 	}
 
@@ -206,7 +206,7 @@ func TestSend_HeaderColourFollowsSeverity(t *testing.T) {
 			msg := sampleMessage()
 			msg.Type = tt.typ
 
-			ch.Send(context.Background(), msg)
+			ch.Send(context.Background(), msg, channel.Target{})
 
 			var payload struct {
 				Card struct {
@@ -229,7 +229,7 @@ func TestSend_TextPayload(t *testing.T) {
 		return map[string]any{"webhook_url": url, "msg_type": "text"}
 	})
 
-	if res := ch.Send(context.Background(), sampleMessage()); res.Class != channel.ClassSent {
+	if res := ch.Send(context.Background(), sampleMessage(), channel.Target{}); res.Class != channel.ClassSent {
 		t.Fatalf("class = %v (%v)", res.Class, res.Err)
 	}
 
@@ -257,7 +257,7 @@ func TestSend_SigningIsAppliedWhenConfigured(t *testing.T) {
 		return map[string]any{"webhook_url": url, "secret": secret}
 	})
 
-	if res := ch.Send(context.Background(), sampleMessage()); res.Class != channel.ClassSent {
+	if res := ch.Send(context.Background(), sampleMessage(), channel.Target{}); res.Class != channel.ClassSent {
 		t.Fatalf("class = %v (%v)", res.Class, res.Err)
 	}
 
@@ -282,7 +282,7 @@ func TestSend_NoSigningWithoutASecret(t *testing.T) {
 		return map[string]any{"webhook_url": url}
 	})
 
-	ch.Send(context.Background(), sampleMessage())
+	ch.Send(context.Background(), sampleMessage(), channel.Target{})
 
 	var payload map[string]any
 	_ = json.Unmarshal(rec.last(t), &payload)
@@ -313,7 +313,7 @@ func TestSend_ClassifiesAPIErrors(t *testing.T) {
 			})
 			rec.code, rec.msg = tt.code, tt.msg
 
-			res := ch.Send(context.Background(), sampleMessage())
+			res := ch.Send(context.Background(), sampleMessage(), channel.Target{})
 			if res.Class != tt.want {
 				t.Errorf("class = %v, want %v (detail: %s)", res.Class, tt.want, res.Detail)
 			}
@@ -338,7 +338,7 @@ func TestSend_UnderstandsBothResponseEnvelopes(t *testing.T) {
 		pool.AddCert(srv.Certificate())
 		ch.(*Channel).client = httpx.NewClient(time.Second, &tls.Config{RootCAs: pool})
 
-		if res := ch.Send(context.Background(), sampleMessage()); res.Class != channel.ClassPermanent {
+		if res := ch.Send(context.Background(), sampleMessage(), channel.Target{}); res.Class != channel.ClassPermanent {
 			t.Errorf("class = %v, want PERMANENT (detail: %s)", res.Class, res.Detail)
 		}
 	})

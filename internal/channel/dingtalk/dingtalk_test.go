@@ -206,7 +206,7 @@ func TestSend_MarkdownPayload(t *testing.T) {
 		return map[string]any{"webhook_url": url, "at_mobiles": []any{"13800000000"}}
 	})
 
-	if res := ch.Send(context.Background(), sampleMessage()); res.Class != channel.ClassSent {
+	if res := ch.Send(context.Background(), sampleMessage(), channel.Target{}); res.Class != channel.ClassSent {
 		t.Fatalf("class = %v (%v)", res.Class, res.Err)
 	}
 
@@ -246,7 +246,7 @@ func TestSend_TextPayload(t *testing.T) {
 		return map[string]any{"webhook_url": url, "msg_type": "text"}
 	})
 
-	if res := ch.Send(context.Background(), sampleMessage()); res.Class != channel.ClassSent {
+	if res := ch.Send(context.Background(), sampleMessage(), channel.Target{}); res.Class != channel.ClassSent {
 		t.Fatalf("class = %v (%v)", res.Class, res.Err)
 	}
 
@@ -267,7 +267,7 @@ func TestSend_AtAll(t *testing.T) {
 		return map[string]any{"webhook_url": url, "at_all": true}
 	})
 
-	ch.Send(context.Background(), sampleMessage())
+	ch.Send(context.Background(), sampleMessage(), channel.Target{})
 
 	var payload struct {
 		At struct {
@@ -285,7 +285,7 @@ func TestSend_SigningIsAppliedWhenConfigured(t *testing.T) {
 		return map[string]any{"webhook_url": url + "?access_token=abc", "secret": "my-secret"}
 	})
 
-	if res := ch.Send(context.Background(), sampleMessage()); res.Class != channel.ClassSent {
+	if res := ch.Send(context.Background(), sampleMessage(), channel.Target{}); res.Class != channel.ClassSent {
 		t.Fatalf("class = %v (%v)", res.Class, res.Err)
 	}
 
@@ -303,7 +303,7 @@ func TestSend_NoSigningWithoutASecret(t *testing.T) {
 		return map[string]any{"webhook_url": url}
 	})
 
-	if res := ch.Send(context.Background(), sampleMessage()); res.Class != channel.ClassSent {
+	if res := ch.Send(context.Background(), sampleMessage(), channel.Target{}); res.Class != channel.ClassSent {
 		t.Fatalf("class = %v (%v)", res.Class, res.Err)
 	}
 
@@ -338,7 +338,7 @@ func TestSend_ClassifiesAPIErrors(t *testing.T) {
 			})
 			rec.errcode, rec.errmsg = tt.errcode, tt.errmsg
 
-			res := ch.Send(context.Background(), sampleMessage())
+			res := ch.Send(context.Background(), sampleMessage(), channel.Target{})
 			if res.Class != tt.want {
 				t.Errorf("class = %v, want %v (detail: %s)", res.Class, tt.want, res.Detail)
 			}
@@ -352,7 +352,7 @@ func TestSend_HTTPFailureIsClassified(t *testing.T) {
 	})
 	rec.status = http.StatusInternalServerError
 
-	if res := ch.Send(context.Background(), sampleMessage()); res.Class != channel.ClassTransient {
+	if res := ch.Send(context.Background(), sampleMessage(), channel.Target{}); res.Class != channel.ClassTransient {
 		t.Errorf("class = %v, want TRANSIENT for a 500", res.Class)
 	}
 }

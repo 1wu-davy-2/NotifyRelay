@@ -111,7 +111,7 @@ func TestSend_StartTLS(t *testing.T) {
 		"ca_file": caPath,
 	})
 
-	res := ch.Send(context.Background(), plainMessage())
+	res := ch.Send(context.Background(), plainMessage(), channel.Target{})
 	if res.Class != channel.ClassSent {
 		t.Fatalf("STARTTLS send = %v (%v, %s)", res.Class, res.Err, res.Detail)
 	}
@@ -145,7 +145,7 @@ func TestSend_ImplicitTLS(t *testing.T) {
 		"ca_file": caPath,
 	})
 
-	res := ch.Send(context.Background(), plainMessage())
+	res := ch.Send(context.Background(), plainMessage(), channel.Target{})
 	if res.Class != channel.ClassSent {
 		t.Fatalf("implicit TLS send = %v (%v, %s)", res.Class, res.Err, res.Detail)
 	}
@@ -180,7 +180,7 @@ func TestSend_UntrustedCertificateIsRefused(t *testing.T) {
 		"from": "relay@example.com", "to": []any{"ops@example.com"},
 	})
 
-	res := ch.Send(context.Background(), plainMessage())
+	res := ch.Send(context.Background(), plainMessage(), channel.Target{})
 	if res.Class != channel.ClassConnectError {
 		t.Fatalf("class = %v (%v, %s), want CONNECT_ERROR", res.Class, res.Err, res.Detail)
 	}

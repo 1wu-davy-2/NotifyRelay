@@ -27,11 +27,20 @@ type fakeChannel struct {
 	overflowMode channel.OverflowMode
 	ratePerSec   float64
 	fail         channel.ResultClass
+	// maxRecipients is what this fake declares about addressing. Zero — the
+	// default — means it takes none, which is the behaviour most of the tests
+	// here rely on.
+	maxRecipients int
 
-	mu      sync.Mutex
-	calls   int
-	lastMsg *message.Message
+	mu         sync.Mutex
+	calls      int
+	lastMsg    *message.Message
+	lastTarget channel.Target
 }
+
+// ref is a target reference with no addressing, which is what nearly every
+// test here means. Addressable targets are spelled out in full.
+func ref(s string) channel.Target { return channel.Target{Ref: s} }
 
 // registerControlled makes a channel type whose factory returns a specific
 // instance, so a test can drive the failures directly rather than through
@@ -106,14 +115,16 @@ func (c *fakeChannel) Capability() channel.Capability {
 		SupportedFormats: c.formats,
 		OverflowMode:     c.overflowMode,
 		RatePerSec:       c.ratePerSec,
+		MaxRecipients:    c.maxRecipients,
 	}
 }
 
-func (c *fakeChannel) Send(_ context.Context, msg *message.Message) channel.Result {
+func (c *fakeChannel) Send(_ context.Context, msg *message.Message, target channel.Target) channel.Result {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.calls++
 	c.lastMsg = msg
+	c.lastTarget = target
 	// The zero value means "not configured to fail". It used to be ClassSent;
 	// ClassNotAttempted took that slot, and a double that fails by default
 	// would be a trap.
@@ -361,7 +372,7 @@ func TestNew_RejectsAnUnknownParameter(t *testing.T) {
 func TestDeliver_UnknownTargetIsPermanent(t *testing.T) {
 	r := newTestRouter(t, config.ChannelConfig{Name: "known", Type: "routertest"})
 
-	res := r.Deliver(context.Background(), "req", "nope", textMessage("b"))
+	res := r.Deliver(context.Background(), "req", ref("nope"), textMessage("b"))
 	if res.Class() != channel.ClassPermanent {
 		t.Errorf("class = %v, want PERMANENT", res.Class())
 	}
@@ -373,25 +384,30 @@ func TestDeliver_UnknownTargetIsPermanent(t *testing.T) {
 func TestDeliver_TypeQualifiedTargetMustMatch(t *testing.T) {
 	r := newTestRouter(t, config.ChannelConfig{Name: "known", Type: "routertest"})
 
-	if res := r.Deliver(context.Background(), "req", "routertest:known", textMessage("b")); res.Class() != channel.ClassSent {
+	if res := r.Deliver(context.Background(), "req", ref("routertest:known"), textMessage("b")); res.Class() != channel.ClassSent {
 		t.Errorf("matching type qualifier should route: %v (%v)", res.Class(), res.Error)
 	}
-	if res := r.Deliver(context.Background(), "req", "email:known", textMessage("b")); res.Class() != channel.ClassPermanent {
+	if res := r.Deliver(context.Background(), "req", ref("email:known"), textMessage("b")); res.Class() != channel.ClassPermanent {
 		t.Errorf("a mismatched type qualifier must be rejected, got %v", res.Class())
 	}
 }
 
-// A URL target is not supported yet; it must be refused outright rather than
-// quietly treated as an instance alias.
-func TestDeliver_URLTargetIsRejectedForNow(t *testing.T) {
+// A URL target naming a scheme no registered channel answers is refused by
+// name, rather than falling through to the alias path and being reported as an
+// instance called "//ops@example.com".
+//
+// This replaces the test that asserted *every* URL target was refused. The
+// resolution itself is covered in target_test.go, which registers a channel
+// that actually claims a scheme.
+func TestDeliver_UnknownURLSchemeIsPermanent(t *testing.T) {
 	r := newTestRouter(t, config.ChannelConfig{Name: "known", Type: "routertest"})
 
-	res := r.Deliver(context.Background(), "req", "mailto://ops@example.com", textMessage("b"))
+	res := r.Deliver(context.Background(), "req", ref("gopher://ops@example.com"), textMessage("b"))
 	if res.Class() != channel.ClassPermanent {
 		t.Errorf("class = %v, want PERMANENT", res.Class())
 	}
-	if !strings.Contains(res.Error, "URL targets") {
-		t.Errorf("error should explain, got: %q", res.Error)
+	if !strings.Contains(res.Error, "gopher") {
+		t.Errorf("the error should name the scheme it could not place, got: %q", res.Error)
 	}
 }
 
@@ -469,6 +485,15 @@ func TestCorePackagesNameNoChannel(t *testing.T) {
 	// Quoted, because that is how a channel name appears in code that has
 	// started special-casing one: switch ch.Type() { case "email": ...
 	forbidden := []string{`"email"`, `"slack"`, `"webhook"`, `"dingtalk"`, `"feishu"`, `"wecom"`}
+
+	// The target scheme counts as a channel name for this rule. It is not in
+	// the list above because it is a different word, which is exactly why it
+	// has to be written down: a `case "mailto":` in the router would pass every
+	// other assertion here while making the core depend on one channel just as
+	// surely. The router dispatches schemes through channel.LookupScheme and
+	// never compares one itself.
+	forbidden = append(forbidden, `"mailto"`)
+
 	dirs := []string{".", "../api", "../message", "../smtpin"}
 
 	for _, dir := range dirs {

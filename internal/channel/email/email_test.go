@@ -149,7 +149,7 @@ func TestSend_ReachesTheServer(t *testing.T) {
 		"to":   []any{"ops@example.com"},
 	})
 
-	res := ch.Send(context.Background(), plainMessage())
+	res := ch.Send(context.Background(), plainMessage(), channel.Target{})
 	if res.Class != channel.ClassSent {
 		t.Fatalf("Send class = %v (%v), want SENT", res.Class, res.Err)
 	}
@@ -178,7 +178,7 @@ func TestSend_ChineseSubjectSurvivesTheWire(t *testing.T) {
 		"to":   []any{"ops@example.com"},
 	})
 
-	if res := ch.Send(context.Background(), plainMessage()); res.Class != channel.ClassSent {
+	if res := ch.Send(context.Background(), plainMessage(), channel.Target{}); res.Class != channel.ClassSent {
 		t.Fatalf("Send class = %v (%v)", res.Class, res.Err)
 	}
 
@@ -215,7 +215,7 @@ func TestSend_HTMLBodyGetsAPlainTextAlternative(t *testing.T) {
 	}
 	msg.Normalize()
 
-	if res := ch.Send(context.Background(), msg); res.Class != channel.ClassSent {
+	if res := ch.Send(context.Background(), msg, channel.Target{}); res.Class != channel.ClassSent {
 		t.Fatalf("Send class = %v (%v)", res.Class, res.Err)
 	}
 
@@ -254,7 +254,7 @@ func TestSend_PartialRecipientFailureIsReportedPerRecipient(t *testing.T) {
 		"to":   []any{"ops@example.com", "gone@example.com"},
 	})
 
-	res := ch.Send(context.Background(), plainMessage())
+	res := ch.Send(context.Background(), plainMessage(), channel.Target{})
 
 	if len(res.Recipients) != 2 {
 		t.Fatalf("got %d recipient results, want 2", len(res.Recipients))
@@ -292,7 +292,7 @@ func TestClassify_TemporaryRejectionIsTransient(t *testing.T) {
 		"to":   []any{"busy@example.com"},
 	})
 
-	res := ch.Send(context.Background(), plainMessage())
+	res := ch.Send(context.Background(), plainMessage(), channel.Target{})
 	if res.Class != channel.ClassTransient {
 		t.Fatalf("class = %v (%v), want TRANSIENT", res.Class, res.Err)
 	}
@@ -312,7 +312,7 @@ func TestClassify_PermanentRejectionIsPermanent(t *testing.T) {
 		"to":   []any{"gone@example.com"},
 	})
 
-	res := ch.Send(context.Background(), plainMessage())
+	res := ch.Send(context.Background(), plainMessage(), channel.Target{})
 	if res.Class != channel.ClassPermanent {
 		t.Fatalf("class = %v (%v), want PERMANENT", res.Class, res.Err)
 	}
@@ -341,7 +341,7 @@ func TestClassify_UnreachableServerIsConnectError(t *testing.T) {
 		"timeout": "2s",
 	})
 
-	res := ch.Send(context.Background(), plainMessage())
+	res := ch.Send(context.Background(), plainMessage(), channel.Target{})
 	if res.Class != channel.ClassConnectError {
 		t.Fatalf("class = %v (%v), want CONNECT_ERROR", res.Class, res.Err)
 	}

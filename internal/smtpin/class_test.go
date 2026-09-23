@@ -33,7 +33,7 @@ func (stubChannel) ParamSchema() []channel.ParamSpec { return nil }
 func (stubChannel) Capability() channel.Capability {
 	return channel.Capability{SupportedFormats: []message.Format{message.FormatText}}
 }
-func (stubChannel) Send(context.Context, *message.Message) channel.Result {
+func (stubChannel) Send(context.Context, *message.Message, channel.Target) channel.Result {
 	return channel.Result{Class: stubClass, Detail: "stub"}
 }
 func (stubChannel) Test(context.Context) channel.Result { return channel.Sent("stub") }

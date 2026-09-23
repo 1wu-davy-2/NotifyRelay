@@ -35,7 +35,7 @@ func TestDeliver_BlockedProbeDoesNotStrandTheHalfOpenSlot(t *testing.T) {
 	r, fake := gatedRouter(t, settings, config.QuotaConfig{PerMinute: 1})
 
 	// Spend the allowance on a delivery that really reaches the channel.
-	if res := r.Deliver(ctx, "req", "gated", textMessage("b")); res.Class() != channel.ClassSent {
+	if res := r.Deliver(ctx, "req", ref("gated"), textMessage("b")); res.Class() != channel.ClassSent {
 		t.Fatalf("the first delivery: class = %v, want SENT", res.Class())
 	}
 
@@ -54,7 +54,7 @@ func TestDeliver_BlockedProbeDoesNotStrandTheHalfOpenSlot(t *testing.T) {
 
 	// The probe is admitted and then blocked by the spent allowance: the
 	// channel is never called, so there is no outcome to report.
-	res := r.Deliver(ctx, "req", "gated", textMessage("b"))
+	res := r.Deliver(ctx, "req", ref("gated"), textMessage("b"))
 	if res.Class() != channel.ClassNotAttempted {
 		t.Fatalf("the blocked probe: class = %v, want NOT_ATTEMPTED", res.Class())
 	}
@@ -65,7 +65,7 @@ func TestDeliver_BlockedProbeDoesNotStrandTheHalfOpenSlot(t *testing.T) {
 	// The slot must be free again. If it is not, the breaker refuses this
 	// delivery as "channel is being probed" — a channel held out of service by
 	// a probe that never happened.
-	res = r.Deliver(ctx, "req", "gated", textMessage("b"))
+	res = r.Deliver(ctx, "req", ref("gated"), textMessage("b"))
 	if res.Reason() == SkipBreakerOpen {
 		t.Fatal("the half-open probe slot was never returned: the breaker is wedged and will refuse every delivery until a restart")
 	}
@@ -94,7 +94,7 @@ func TestDeliver_SentDeliveryHasNoSkipReason(t *testing.T) {
 		HalfOpenProbes:   1,
 	}, config.QuotaConfig{})
 
-	res := r.Deliver(ctx, "req", "gated", textMessage("b"))
+	res := r.Deliver(ctx, "req", ref("gated"), textMessage("b"))
 	if res.WasSkipped() {
 		t.Errorf("a delivered message reported skip_reason = %q", res.Reason())
 	}

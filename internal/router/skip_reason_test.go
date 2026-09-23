@@ -37,7 +37,7 @@ func TestDeliver_SkipReasonBreakerOpen(t *testing.T) {
 
 	openBreaker(t, r, "gated", 2)
 
-	res := r.Deliver(context.Background(), "req", "gated", textMessage("b"))
+	res := r.Deliver(context.Background(), "req", ref("gated"), textMessage("b"))
 
 	if res.Class() != channel.ClassNotAttempted {
 		t.Errorf("class = %v, want NOT_ATTEMPTED so the queue waits instead of spending an attempt", res.Class())
@@ -68,11 +68,11 @@ func TestDeliver_SkipReasonQuotaExhausted(t *testing.T) {
 		HalfOpenProbes:   1,
 	}, config.QuotaConfig{PerMinute: 1})
 
-	if res := r.Deliver(context.Background(), "req", "gated", textMessage("b")); res.Class() != channel.ClassSent {
+	if res := r.Deliver(context.Background(), "req", ref("gated"), textMessage("b")); res.Class() != channel.ClassSent {
 		t.Fatalf("the first delivery: class = %v, want SENT", res.Class())
 	}
 
-	res := r.Deliver(context.Background(), "req", "gated", textMessage("b"))
+	res := r.Deliver(context.Background(), "req", ref("gated"), textMessage("b"))
 	if res.Class() != channel.ClassNotAttempted {
 		t.Errorf("class = %v, want NOT_ATTEMPTED", res.Class())
 	}
@@ -99,14 +99,14 @@ func TestDeliver_SkipReasonRateLimited(t *testing.T) {
 	// waited out inside any deadline a test will accept.
 	fake.ratePerSec = 0.001
 
-	if res := r.Deliver(context.Background(), "req", "gated", textMessage("b")); res.Class() != channel.ClassSent {
+	if res := r.Deliver(context.Background(), "req", ref("gated"), textMessage("b")); res.Class() != channel.ClassSent {
 		t.Fatalf("the first delivery: class = %v, want SENT", res.Class())
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	res := r.Deliver(ctx, "req", "gated", textMessage("b"))
+	res := r.Deliver(ctx, "req", ref("gated"), textMessage("b"))
 	if res.Class() != channel.ClassNotAttempted {
 		t.Errorf("class = %v, want NOT_ATTEMPTED", res.Class())
 	}
@@ -139,7 +139,7 @@ func (c *leakyChannel) ParamSchema() []channel.ParamSpec {
 func (c *leakyChannel) Capability() channel.Capability {
 	return channel.Capability{SupportedFormats: []message.Format{message.FormatText}}
 }
-func (c *leakyChannel) Send(context.Context, *message.Message) channel.Result {
+func (c *leakyChannel) Send(context.Context, *message.Message, channel.Target) channel.Result {
 	return channel.ConnectError(
 		fmt.Errorf("Post \"https://hooks.example.com/services/%s\": dial tcp: connection refused", c.secret),
 		"never reached the endpoint")
@@ -187,7 +187,7 @@ func TestDeliver_ConfiguredSecretNeverReachesTheOutcome(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	res := r.Deliver(context.Background(), "req", "leaky", textMessage("b"))
+	res := r.Deliver(context.Background(), "req", ref("leaky"), textMessage("b"))
 
 	if strings.Contains(res.Error, secret) {
 		t.Errorf("the configured secret reached the outcome: %q", res.Error)
@@ -224,7 +224,7 @@ func TestDeliver_PartiallySentDeliveryIsNotSkipped(t *testing.T) {
 	fake.bodyMaxLen = 20
 	fake.overflowMode = channel.OverflowSplit
 
-	res := r.Deliver(context.Background(), "req", "gated", textMessage(strings.Repeat("x", 200)))
+	res := r.Deliver(context.Background(), "req", ref("gated"), textMessage(strings.Repeat("x", 200)))
 
 	fake.mu.Lock()
 	calls := fake.calls
@@ -276,7 +276,7 @@ func TestDeliver_SkipReasonAndClassAgree(t *testing.T) {
 
 			if !tc.openIt {
 				// Spend the allowance on a real delivery first.
-				if res := r.Deliver(context.Background(), "req", "gated", textMessage("b")); res.WasSkipped() {
+				if res := r.Deliver(context.Background(), "req", ref("gated"), textMessage("b")); res.WasSkipped() {
 					t.Fatalf("the delivery that was meant to spend the allowance was skipped: %q", res.Reason())
 				}
 			} else {
@@ -287,7 +287,7 @@ func TestDeliver_SkipReasonAndClassAgree(t *testing.T) {
 			before := fake.calls
 			fake.mu.Unlock()
 
-			res := r.Deliver(context.Background(), "req", "gated", textMessage("b"))
+			res := r.Deliver(context.Background(), "req", ref("gated"), textMessage("b"))
 
 			skipped := res.Reason() != skipNone
 			notAttempted := res.Class() == channel.ClassNotAttempted

@@ -115,16 +115,9 @@ func TestParseConfig_RejectsBadInput(t *testing.T) {
 			mutate:  func(m map[string]any) { delete(m, "from") },
 			wantSub: "from",
 		},
-		{
-			name:    "missing to",
-			mutate:  func(m map[string]any) { delete(m, "to") },
-			wantSub: "to",
-		},
-		{
-			name:    "empty recipient list",
-			mutate:  func(m map[string]any) { m["to"] = []any{} },
-			wantSub: "at least one recipient",
-		},
+		// A missing or empty `to` is deliberately absent from this table: it is
+		// valid now that the caller may supply the recipients. See
+		// TestParseConfig_RecipientsAreOptional.
 		{
 			name:    "port out of range",
 			mutate:  func(m map[string]any) { m["port"] = 70000 },
@@ -201,6 +194,57 @@ func TestParseConfig_SingleRecipientStringIsAccepted(t *testing.T) {
 	}
 	if len(cfg.To) != 1 || cfg.To[0] != "ops@example.com" {
 		t.Errorf("to = %v, want [ops@example.com]", cfg.To)
+	}
+}
+
+// An instance with no fixed recipients is the transactional-mail shape: the
+// caller names them per request. Whether one actually arrives is a delivery
+// question, so it is not refused here.
+//
+// This inverts what the parser used to do, which is why it is spelled out:
+// requiring `to` at startup made a channel that can only ever send to the
+// operator's own mailbox, and that is exactly the case transactional mail is
+// not.
+func TestParseConfig_RecipientsAreOptional(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "absent", mutate: func(m map[string]any) { delete(m, "to") }},
+		{name: "empty", mutate: func(m map[string]any) { m["to"] = []any{} }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := map[string]any{"host": "h", "from": "a@b.c"}
+			tt.mutate(raw)
+
+			cfg, err := parseConfig(raw)
+			if err != nil {
+				t.Fatalf("parseConfig: %v", err)
+			}
+			if len(cfg.To) != 0 {
+				t.Errorf("to = %v, want empty", cfg.To)
+			}
+		})
+	}
+}
+
+// The channel must declare both halves of addressing, or the request forms that
+// depend on them are unreachable: `to` needs MaxRecipients to be non-zero, and
+// a mailto: target needs the scheme and a parser to read it.
+func TestDescriptor_DeclaresAddressing(t *testing.T) {
+	d, ok := channel.Lookup("email")
+	if !ok {
+		t.Fatal("email is not registered")
+	}
+	if d.TargetScheme != "mailto" {
+		t.Errorf("TargetScheme = %q, want \"mailto\"", d.TargetScheme)
+	}
+	if d.ParseTarget == nil {
+		t.Error("ParseTarget is nil; a mailto: target could never be read")
+	}
+	if d.Capability.MaxRecipients <= 0 {
+		t.Errorf("MaxRecipients = %d; zero means the channel takes no recipients at all",
+			d.Capability.MaxRecipients)
 	}
 }
 

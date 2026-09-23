@@ -54,7 +54,7 @@ func TestDeliver_SuspendedChannelDoesNotConsumeQuota(t *testing.T) {
 	// Two transient failures open the breaker.
 	fake.fail = channel.ClassTransient
 	for i := 0; i < 2; i++ {
-		r.Deliver(ctx, "req", "gated", textMessage("b"))
+		r.Deliver(ctx, "req", ref("gated"), textMessage("b"))
 	}
 
 	fake.mu.Lock()
@@ -68,7 +68,7 @@ func TestDeliver_SuspendedChannelDoesNotConsumeQuota(t *testing.T) {
 	// Now the breaker is open. Twenty deliveries must all be refused without
 	// reaching the channel.
 	for i := 0; i < 20; i++ {
-		res := r.Deliver(ctx, "req", "gated", textMessage("b"))
+		res := r.Deliver(ctx, "req", ref("gated"), textMessage("b"))
 		if res.Class() != channel.ClassNotAttempted {
 			t.Fatalf("delivery %d: class = %v, want NOT_ATTEMPTED so the queue releases it", i, res.Class())
 		}
@@ -117,7 +117,7 @@ func TestDeliver_ConnectErrorsAreNotCharged(t *testing.T) {
 
 	// Four attempts, all failing to reach the peer.
 	for i := 0; i < 4; i++ {
-		r.Deliver(ctx, "req", "gated", textMessage("b"))
+		r.Deliver(ctx, "req", ref("gated"), textMessage("b"))
 	}
 
 	// Every one of them released its reservation, so the allowance is whole.
@@ -144,7 +144,7 @@ func TestDeliver_TransientErrorsAreCharged(t *testing.T) {
 	fake.fail = channel.ClassTransient
 
 	for i := 0; i < 4; i++ {
-		r.Deliver(ctx, "req", "gated", textMessage("b"))
+		r.Deliver(ctx, "req", ref("gated"), textMessage("b"))
 	}
 
 	// The peer was called and answered, so the allowance is spent.
@@ -172,14 +172,14 @@ func TestDeliver_QuotaRefusalsDoNotOpenTheBreaker(t *testing.T) {
 	r, fake := gatedRouter(t, settings, config.QuotaConfig{PerSecond: 2})
 
 	for i := 0; i < 2; i++ {
-		if res := r.Deliver(ctx, "req", "gated", textMessage("b")); res.Class() != channel.ClassSent {
+		if res := r.Deliver(ctx, "req", ref("gated"), textMessage("b")); res.Class() != channel.ClassSent {
 			t.Fatalf("delivery %d inside the allowance: class = %v", i+1, res.Class())
 		}
 	}
 
 	// Ten more, well past the breaker's threshold of three.
 	for i := 0; i < 10; i++ {
-		res := r.Deliver(ctx, "req", "gated", textMessage("b"))
+		res := r.Deliver(ctx, "req", ref("gated"), textMessage("b"))
 		if res.Class() != channel.ClassNotAttempted {
 			t.Fatalf("refusal %d: class = %v, want NOT_ATTEMPTED so the queue waits", i+1, res.Class())
 		}
@@ -212,13 +212,13 @@ func TestDeliver_QuotaExhaustionIsNoCapacity(t *testing.T) {
 	r, fake := gatedRouter(t, settings, config.QuotaConfig{PerSecond: 1})
 
 	// The first fits.
-	if res := r.Deliver(ctx, "req", "gated", textMessage("b")); res.Class() != channel.ClassSent {
+	if res := r.Deliver(ctx, "req", ref("gated"), textMessage("b")); res.Class() != channel.ClassSent {
 		t.Fatalf("the first delivery: class = %v", res.Class())
 	}
 
 	// The allowance is gone; the next is refused as no-capacity, not as a
 	// failure.
-	res := r.Deliver(ctx, "req", "gated", textMessage("b"))
+	res := r.Deliver(ctx, "req", ref("gated"), textMessage("b"))
 	if res.Class() != channel.ClassNotAttempted {
 		t.Errorf("class = %v, want NOT_ATTEMPTED so the queue waits instead of spending an attempt", res.Class())
 	}

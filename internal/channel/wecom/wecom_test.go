@@ -128,7 +128,7 @@ func TestSend_WebhookPayload(t *testing.T) {
 		return map[string]any{"mode": "webhook", "webhook_url": base + "/cgi-bin/webhook/send?key=abc"}
 	})
 
-	if res := ch.Send(context.Background(), sampleMessage()); res.Class != channel.ClassSent {
+	if res := ch.Send(context.Background(), sampleMessage(), channel.Target{}); res.Class != channel.ClassSent {
 		t.Fatalf("class = %v (%v)", res.Class, res.Err)
 	}
 
@@ -163,7 +163,7 @@ func TestSend_WebhookPayload(t *testing.T) {
 func TestSend_AppModeUsesTheTokenAndAddressesTheRecipient(t *testing.T) {
 	ch, rec := newChannel(t, appConfig)
 
-	if res := ch.Send(context.Background(), sampleMessage()); res.Class != channel.ClassSent {
+	if res := ch.Send(context.Background(), sampleMessage(), channel.Target{}); res.Class != channel.ClassSent {
 		t.Fatalf("class = %v (%v)", res.Class, res.Err)
 	}
 
@@ -203,7 +203,7 @@ func TestSend_ConcurrentSendsFetchOneToken(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			results[i] = ch.Send(context.Background(), sampleMessage())
+			results[i] = ch.Send(context.Background(), sampleMessage(), channel.Target{})
 		}(i)
 	}
 	close(start)
@@ -226,7 +226,7 @@ func TestSend_TokenIsReusedAcrossSends(t *testing.T) {
 	ch, rec := newChannel(t, appConfig)
 
 	for i := 0; i < 5; i++ {
-		if res := ch.Send(context.Background(), sampleMessage()); res.Class != channel.ClassSent {
+		if res := ch.Send(context.Background(), sampleMessage(), channel.Target{}); res.Class != channel.ClassSent {
 			t.Fatalf("send %d: %v", i, res.Err)
 		}
 	}
@@ -245,7 +245,7 @@ func TestSend_ExpiredTokenIsRefreshedAndRetried(t *testing.T) {
 	// refreshed token and then reported as the server described it.
 	rec.errcode, rec.errmsg = errCodeInvalidToken, "invalid credential"
 
-	res := ch.Send(context.Background(), sampleMessage())
+	res := ch.Send(context.Background(), sampleMessage(), channel.Target{})
 	if res.Class != channel.ClassTransient {
 		t.Fatalf("class = %v, want TRANSIENT while the server keeps refusing", res.Class)
 	}
@@ -257,7 +257,7 @@ func TestSend_ExpiredTokenIsRefreshedAndRetried(t *testing.T) {
 	rec.errcode, rec.errmsg = 0, "ok"
 	before := rec.tokens()
 
-	if res := ch.Send(context.Background(), sampleMessage()); res.Class != channel.ClassSent {
+	if res := ch.Send(context.Background(), sampleMessage(), channel.Target{}); res.Class != channel.ClassSent {
 		t.Errorf("class = %v (%v), want SENT", res.Class, res.Err)
 	}
 	if got := rec.tokens(); got != before {
@@ -269,7 +269,7 @@ func TestSend_RateLimitIsTransient(t *testing.T) {
 	ch, rec := newChannel(t, appConfig)
 	rec.errcode, rec.errmsg = 45009, "api freq out of limit"
 
-	if res := ch.Send(context.Background(), sampleMessage()); res.Class != channel.ClassTransient {
+	if res := ch.Send(context.Background(), sampleMessage(), channel.Target{}); res.Class != channel.ClassTransient {
 		t.Errorf("class = %v, want TRANSIENT", res.Class)
 	}
 }
@@ -278,7 +278,7 @@ func TestSend_PermanentErrorIsNotRetried(t *testing.T) {
 	ch, rec := newChannel(t, appConfig)
 	rec.errcode, rec.errmsg = 81013, "user not found"
 
-	if res := ch.Send(context.Background(), sampleMessage()); res.Class != channel.ClassPermanent {
+	if res := ch.Send(context.Background(), sampleMessage(), channel.Target{}); res.Class != channel.ClassPermanent {
 		t.Errorf("class = %v, want PERMANENT", res.Class)
 	}
 	// A rejected token triggers a refresh and one retry; a rejected recipient
@@ -299,7 +299,7 @@ func TestSend_TokenFetchFailureIsConnectError(t *testing.T) {
 
 	ch.getTokenURL = url + "/cgi-bin/gettoken"
 
-	res := ch.Send(context.Background(), sampleMessage())
+	res := ch.Send(context.Background(), sampleMessage(), channel.Target{})
 	if res.Class != channel.ClassConnectError {
 		t.Errorf("class = %v (%s), want CONNECT_ERROR", res.Class, res.Detail)
 	}

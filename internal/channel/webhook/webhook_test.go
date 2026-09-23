@@ -101,7 +101,7 @@ func TestSend_PostsTheDefaultPayload(t *testing.T) {
 	defer srv.Close()
 
 	ch := newChannel(t, map[string]any{"url": srv.URL})
-	res := ch.Send(context.Background(), sampleMessage())
+	res := ch.Send(context.Background(), sampleMessage(), channel.Target{})
 
 	if res.Class != channel.ClassSent {
 		t.Fatalf("class = %v (%v)", res.Class, res.Err)
@@ -143,7 +143,7 @@ func TestSend_PayloadTemplate(t *testing.T) {
 		"payload_template": `{"text": "{title}: {body}", "level": "x"}`,
 	})
 
-	if res := ch.Send(context.Background(), sampleMessage()); res.Class != channel.ClassSent {
+	if res := ch.Send(context.Background(), sampleMessage(), channel.Target{}); res.Class != channel.ClassSent {
 		t.Fatalf("class = %v (%v)", res.Class, res.Err)
 	}
 
@@ -172,7 +172,7 @@ func TestSend_PayloadTemplateEscapesValues(t *testing.T) {
 	msg := sampleMessage()
 	msg.Body = "line one\nline \"two\" \\ three"
 
-	if res := ch.Send(context.Background(), msg); res.Class != channel.ClassSent {
+	if res := ch.Send(context.Background(), msg, channel.Target{}); res.Class != channel.ClassSent {
 		t.Fatalf("class = %v (%v)", res.Class, res.Err)
 	}
 
@@ -195,7 +195,7 @@ func TestSend_RejectsATemplateThatIsNotJSON(t *testing.T) {
 		"payload_template": `not json at all`,
 	})
 
-	res := ch.Send(context.Background(), sampleMessage())
+	res := ch.Send(context.Background(), sampleMessage(), channel.Target{})
 	if res.Class != channel.ClassPermanent {
 		t.Fatalf("class = %v, want PERMANENT", res.Class)
 	}
@@ -276,7 +276,7 @@ func TestSend_Authentication(t *testing.T) {
 			}
 
 			ch := newChannel(t, cfg)
-			if res := ch.Send(context.Background(), sampleMessage()); res.Class != channel.ClassSent {
+			if res := ch.Send(context.Background(), sampleMessage(), channel.Target{}); res.Class != channel.ClassSent {
 				t.Fatalf("class = %v (%v)", res.Class, res.Err)
 			}
 			tt.verify(t, rec.last(t))
@@ -318,7 +318,7 @@ func TestSend_ClassifiesResponses(t *testing.T) {
 			defer srv.Close()
 
 			ch := newChannel(t, map[string]any{"url": srv.URL})
-			res := ch.Send(context.Background(), sampleMessage())
+			res := ch.Send(context.Background(), sampleMessage(), channel.Target{})
 
 			if res.Class != tt.want {
 				t.Errorf("class = %v, want %v (detail: %s)", res.Class, tt.want, res.Detail)
@@ -340,7 +340,7 @@ func TestSend_RetryAfterIsSurfacedInTheDetail(t *testing.T) {
 	defer srv.Close()
 
 	ch := newChannel(t, map[string]any{"url": srv.URL})
-	res := ch.Send(context.Background(), sampleMessage())
+	res := ch.Send(context.Background(), sampleMessage(), channel.Target{})
 
 	if res.Class != channel.ClassTransient {
 		t.Fatalf("class = %v, want TRANSIENT", res.Class)
@@ -356,7 +356,7 @@ func TestSend_UnreachableEndpointIsConnectError(t *testing.T) {
 	srv.Close() // nothing is listening now
 
 	ch := newChannel(t, map[string]any{"url": url, "timeout": "2s"})
-	res := ch.Send(context.Background(), sampleMessage())
+	res := ch.Send(context.Background(), sampleMessage(), channel.Target{})
 
 	if res.Class != channel.ClassConnectError {
 		t.Fatalf("class = %v (%s), want CONNECT_ERROR", res.Class, res.Detail)

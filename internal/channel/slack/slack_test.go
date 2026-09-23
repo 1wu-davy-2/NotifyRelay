@@ -103,7 +103,7 @@ func TestSend_IncomingWebhook(t *testing.T) {
 		return map[string]any{"webhook_url": url}
 	})
 
-	res := ch.Send(context.Background(), sampleMessage())
+	res := ch.Send(context.Background(), sampleMessage(), channel.Target{})
 	if res.Class != channel.ClassSent {
 		t.Fatalf("class = %v (%v)", res.Class, res.Err)
 	}
@@ -132,7 +132,7 @@ func TestSend_BotToken(t *testing.T) {
 	// can be exercised; a hardcoded host would make it untestable.
 	ch.postURL = base + "/api/chat.postMessage"
 
-	if res := ch.Send(context.Background(), sampleMessage()); res.Class != channel.ClassSent {
+	if res := ch.Send(context.Background(), sampleMessage(), channel.Target{}); res.Class != channel.ClassSent {
 		t.Fatalf("class = %v (%v)", res.Class, res.Err)
 	}
 
@@ -194,7 +194,7 @@ func TestSend_BotTokenAPIErrorIsAFailure(t *testing.T) {
 			ch.postURL = base + "/api/chat.postMessage"
 			rec.reply = tt.reply
 
-			res := ch.Send(context.Background(), sampleMessage())
+			res := ch.Send(context.Background(), sampleMessage(), channel.Target{})
 			if res.Class != tt.want {
 				t.Errorf("class = %v, want %v (detail: %s)", res.Class, tt.want, res.Detail)
 			}
@@ -211,7 +211,7 @@ func TestSend_HTTPFailureIsClassified(t *testing.T) {
 	})
 	rec.status = http.StatusInternalServerError
 
-	if res := ch.Send(context.Background(), sampleMessage()); res.Class != channel.ClassTransient {
+	if res := ch.Send(context.Background(), sampleMessage(), channel.Target{}); res.Class != channel.ClassTransient {
 		t.Errorf("class = %v, want TRANSIENT for a 500", res.Class)
 	}
 }

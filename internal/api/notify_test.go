@@ -28,8 +28,39 @@ var registerFakeOnce sync.Once
 // a real transport. It is registered under its own type name so it cannot
 // collide with a built-in channel.
 type fakeChannel struct {
-	fail  channel.ResultClass
-	delay time.Duration
+	instance string
+	typeName string
+	fail     channel.ResultClass
+	delay    time.Duration
+	// maxRecipients is what this instance declares about addressing. Zero —
+	// the default — means it takes none, which is what the tests that assert a
+	// refusal rely on.
+	maxRecipients int
+}
+
+// sentTargets records what each instance was asked to deliver to, so a test can
+// assert on the addressing without reaching into the router's internals.
+var (
+	sentMu      sync.Mutex
+	sentTargets = map[string][]channel.Target{}
+)
+
+func recordTarget(instance string, t channel.Target) {
+	sentMu.Lock()
+	defer sentMu.Unlock()
+	sentTargets[instance] = append(sentTargets[instance], t)
+}
+
+func targetsFor(instance string) []channel.Target {
+	sentMu.Lock()
+	defer sentMu.Unlock()
+	return append([]channel.Target(nil), sentTargets[instance]...)
+}
+
+func resetTargets() {
+	sentMu.Lock()
+	defer sentMu.Unlock()
+	sentTargets = map[string][]channel.Target{}
 }
 
 func fakeParamSchema() []channel.ParamSpec {
@@ -47,8 +78,8 @@ func registerFakeChannel() {
 			Capability: channel.Capability{
 				SupportedFormats: []message.Format{message.FormatText, message.FormatMarkdown, message.FormatHTML},
 			},
-			Factory: func(_ string, cfg map[string]any) (channel.Channel, error) {
-				c := &fakeChannel{}
+			Factory: func(instance string, cfg map[string]any) (channel.Channel, error) {
+				c := &fakeChannel{instance: instance}
 				switch cfg["fail"] {
 				case "permanent":
 					c.fail = channel.ClassPermanent
@@ -68,16 +99,24 @@ func registerFakeChannel() {
 	})
 }
 
-func (c *fakeChannel) Type() string                     { return "apitest" }
+func (c *fakeChannel) Type() string {
+	if c.typeName != "" {
+		return c.typeName
+	}
+	return "apitest"
+}
 func (c *fakeChannel) ParamSchema() []channel.ParamSpec { return fakeParamSchema() }
 
 func (c *fakeChannel) Capability() channel.Capability {
 	return channel.Capability{
 		SupportedFormats: []message.Format{message.FormatText, message.FormatMarkdown, message.FormatHTML},
+		MaxRecipients:    c.maxRecipients,
 	}
 }
 
-func (c *fakeChannel) Send(ctx context.Context, _ *message.Message) channel.Result {
+func (c *fakeChannel) Send(ctx context.Context, _ *message.Message, target channel.Target) channel.Result {
+	recordTarget(c.instance, target)
+
 	if c.delay > 0 {
 		select {
 		case <-time.After(c.delay):
