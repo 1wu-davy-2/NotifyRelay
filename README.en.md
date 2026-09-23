@@ -368,18 +368,16 @@ to buy an accuracy nobody needs.
 
 ## Architecture
 
-> The three diagrams in this section and the next are labelled in Chinese.
-> The prose around them is not.
-
 ### The layers
 
-![NotifyRelay technical architecture](docs/项目架构-技术栈.png)
+![NotifyRelay component layers](docs/NotifyRelay_EN_Architecture_Layers.png)
 
-Five layers, and the dependency arrows only ever point one way. The channel
-plugin layer is where all channel-specific knowledge lives; the core delivery
-layer above it does not know that `dingtalk` exists. The dashed arrows are the
-distinction that matters operationally: the solid ones are network calls that
-can fail and be retried, the dashed ones are writes that must not be lost.
+Six columns, and the dependency arrows only ever point one way. The core domain
+is the one stretch of code that does not know `dingtalk` exists; all channel
+knowledge lives in the plugin layer to its right. The two trust boundaries are
+clearest here as well: ingress authenticates a bearer key held by a service, the
+operations panel authenticates a session held by a person plus CSRF — which is
+why `internal/admin` is a package of its own.
 
 ### What happens to one message
 
@@ -399,7 +397,7 @@ can fail and be retried, the dashed ones are writes that must not be lost.
                                              │ claim (worker pool)
                                              ▼
                           ┌─────────────────────────────────────┐
-                          │ breaker ▶ dialect ▶ split           │
+                          │ resolve ▶ breaker ▶ dialect ▶ split │
                           │ ▶ quota reserve ▶ rate limit ▶ SEND │
                           └──────────────────┬──────────────────┘
                                              │ settle → attempt, class, skip_reason
@@ -424,15 +422,17 @@ That order is not arbitrary, and it is the part worth reading twice:
   half-open probe accounting correct when things go wrong, not just when they
   go right.
 
-### The full component map
+### The full architecture
 
-<img src="docs/项目架构图.png" width="760" alt="NotifyRelay component architecture">
+<img src="docs/NotifyRelay_EN_Architecture.png" width="1000" alt="NotifyRelay system architecture">
 
-Every box in the two views above, expanded — including the parts that are easy
-to forget when reasoning about the system: that the operator UI reaches the same
-router the API does, that a `sync: true` request takes a different path through
-the queue than the default asynchronous one, and that `spool` and `secret` are
-storage concerns the core never touches directly.
+The whole picture in one image; the deployment form is its lower half. The parts
+that are easy to forget when reasoning about the system: that the operator UI is
+served from the same port as the API, that a `sync: true` request takes a
+different path through the queue than the default asynchronous one, that `spool`
+and `secret` are storage concerns the core never touches directly, and that the
+SMTP ingress never enters the local queue — it validates the recipient and hands
+the message back to the upstream MTA, answering 451 so the upstream retries.
 
 ### Packages
 
@@ -459,7 +459,14 @@ internal/
   store/spool/           message bodies on disk, so the queue table stays small
   audit/                 attempt records
   auth/                  API key digests and argon2id passwords
-  admin/                 operator API and UI: sessions, channel CRUD, breaker reset, replay
+  admin/                 operator API and UI: sessions, channel CRUD, breaker reset,
+                         replay, test notifications, the first-run checklist,
+                         password change, the API reference page
+  admin/i18n/            the interface copy table, one per language. A **struct, not a
+                         map** — a missing translation is a compile error
+  admin/templates/       page templates, parsed once per language because the
+                         relative-time and timestamp functions cannot reach the request
+  admin/samples/         the worked examples, one directory per language
   config/                the configuration file, and the channel store that lives in the database
   secret/                sealing individual credential values at rest
   metrics/               Prometheus instrumentation
@@ -559,17 +566,28 @@ configured, storing a credential is refused rather than written in the clear.
 
 ## Deployment
 
-![NotifyRelay deployment](docs/部署架构图.png)
+The deployment form is the lower half of the full architecture diagram in
+**Architecture** above: one pod, two ports, one PVC.
 
 One instance, two ports, one volume. The volume is the whole of the state — the
-queue, the channel configuration and the message bodies — which is why the
-backup section of the operations manual is about one directory and one key
-rather than a list of things to remember.
+queue, the channel configuration, the message bodies, **and both keys**
+(`keys/secret.key` and `keys/session.key`, generated on first boot, mode 0600) —
+which is why the backup is "copy a directory" rather than a list of things to
+remember.
+
+> Lose `secret.key` and every channel credential in the database becomes
+> ciphertext nobody can read. Keeping the key beside the data is a deliberate
+> trade: an earlier version required it to be configured separately, on the
+> grounds that a backup of nothing but ciphertext is not a backup, and what that
+> bought was a backup that could not be restored. The cost is written up in the
+> operations manual, §2.
 
 ```bash
 # Docker Compose
-cp .env.example .env          # fill in the secrets; .env is gitignored
-cp configs/notifyrelay.example.yaml configs/notifyrelay.yaml
+# Docker Compose — no preparation step. The image carries its own configuration,
+# the two keys are generated on first boot, and the administrator account is
+# created in the browser. `.env` is only for changing the ports or injecting
+# channel credentials.
 docker compose up -d
 
 # Kubernetes
@@ -611,11 +629,15 @@ rather than leaving you to guess which half of your edit landed — `reload: don
 does not mean everything was applied. A configuration file that fails to parse
 leaves the running one in place.
 
-The operator UI is **off by default** (`admin.enabled: false`). It can change
-every channel's configuration, so it is considerably more sensitive than the
-notification API: sessions live in server memory, credentials never travel back
-to the browser, state-changing requests need a custom header *and* a
-`SameSite=Lax` cookie, and every one of them is written to an audit table.
+The operator UI is **off by default in the binary** (`admin.enabled: false`) and
+**on by default in the container image**. The two defaults differ on purpose:
+starting a service by hand on a machine should not also open a management
+interface nobody asked for, and the whole point of the image is that it can be
+configured without an editor — which needs one. It can change every channel's
+configuration, so it is considerably more sensitive than the notification API:
+sessions live in server memory, credentials never travel back to the browser,
+state-changing requests need a custom header *and* a `SameSite=Lax` cookie, and
+every one of them is written to an audit table.
 
 ### What has not been verified
 
@@ -771,6 +793,8 @@ of it — the research that ruled options out, the decisions and what they cost.
 | [`docs/05-paramschema-audit.md`](docs/05-paramschema-audit.md) | An audit of `ParamSchema` before the UI was written — what a form can and cannot be generated from |
 | [`docs/06-operations.md`](docs/06-operations.md) | The operations manual: backup, upgrade, metrics, troubleshooting, and the unverified list |
 | [`docs/07-api.md`](docs/07-api.md) | The API reference: every endpoint, field, status code and error code — including nine places where the API behaves in a way you would not guess |
+| [`docs/08-ui-plan.md`](docs/08-ui-plan.md) | The plan the interface work followed: what the investigation found, the five phases, and why the redesign and the translation were done together |
+| [`docs/i18n-inventory.md`](docs/i18n-inventory.md) | The string inventory: 236 pieces of interface copy counted one at a time, 64 channel-parameter labels, and the categories deliberately left in English |
 
 ---
 
