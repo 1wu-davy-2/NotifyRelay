@@ -144,6 +144,32 @@ type Capability struct {
 	RatePerSec        float64 // 0 = unlimited
 	OverflowMode      OverflowMode
 
+	// MaxRecipients is the largest number of caller-supplied recipients one
+	// delivery may name. The core enforces it before the channel is called.
+	//
+	// Zero means something different here than it does for the limits above.
+	// Everywhere else zero is "no limit"; here it means the type takes no
+	// addressing from the caller at all — which is also how the core decides
+	// whether a request's `to` field means anything for a given target. A
+	// channel that does address recipients must therefore declare a positive
+	// cap; "unlimited" is not on offer, because a caller who supplies the list
+	// controls how many connections the channel opens.
+	MaxRecipients int
+
+	// NeedsRecipients reports that this instance has no destination of its own
+	// and can only deliver for a caller that names one.
+	//
+	// An email instance with no `to` is configured for transactional mail
+	// alone, and a delivery that reaches it without a recipient can only ever
+	// fail. The operator surface reads this so that its test button can say so
+	// rather than report a failure the operator did not cause.
+	//
+	// Named for the exceptional case so that the zero value is the ordinary
+	// one: a channel with a fixed endpoint — which is every channel but one —
+	// has nothing to set. This is an instance-level value, like the limits
+	// above, so two instances of the same type can disagree.
+	NeedsRecipients bool
+
 	// MarkdownDialect is the markdown flavour the channel renders. The core
 	// converts CommonMark into it, so no channel contains a converter.
 	MarkdownDialect render.Dialect
@@ -187,6 +213,50 @@ type Descriptor struct {
 	ParamSchema []ParamSpec
 	Capability  Capability
 	Factory     Factory
+
+	// TargetScheme is the URL scheme that addresses this channel type in a
+	// target string — "mailto" for email. Empty means the type has no URL
+	// form, and a target naming this scheme is refused.
+	TargetScheme string
+
+	// ParseTarget reads a target URL into the addressing it names and the
+	// instance whose transport it borrows.
+	//
+	// It lives on the channel because only the channel knows what its own URLs
+	// mean, and that is also what lets the router dispatch on a scheme without
+	// naming any channel: it looks the scheme up in the registry and calls
+	// this. The returned Target carries Ref and Recipients, plus Instance when
+	// the URL named one.
+	ParseTarget func(raw string) (Target, error)
+}
+
+// Target is one place a message is delivered to.
+//
+// It is the envelope, kept separate from the message for the same reason SMTP
+// keeps RCPT apart from DATA: what a notification says does not change with who
+// receives it. The separation earns its keep here — the queue spools one copy
+// of the message per target, so an address folded into the message would be
+// delivered to every other target of the same request as well.
+type Target struct {
+	// Ref is the target as the caller wrote it: an instance alias, a
+	// type-qualified alias, or a channel URL. Outcomes echo it back, so a
+	// caller always sees the string it sent.
+	Ref string
+
+	// Instance is the configured instance to deliver through, as resolved by
+	// the router. Empty means "resolve it from Ref".
+	//
+	// Anything that stores a target and delivers it later must fill this in at
+	// the moment it accepts the delivery. Re-resolving later asks a different
+	// question: "the only channel of this type" is a fact about the
+	// configuration at accept time, and a second channel added in between turns
+	// a queued delivery into an ambiguous one that was already acknowledged.
+	Instance string
+
+	// Recipients is addressing supplied by the caller. Only a channel that
+	// declares MaxRecipients reads it; empty means the instance's own
+	// configuration decides where the message goes.
+	Recipients []string
 }
 
 // Channel is the only interface the core router knows about.
@@ -204,9 +274,14 @@ type Channel interface {
 	// ParamSchema declares the configuration parameters this channel accepts.
 	ParamSchema() []ParamSpec
 
-	// Send delivers the message. It must classify every failure into exactly
-	// one ResultClass; returning an unclassified error is a bug.
-	Send(ctx context.Context, msg *message.Message) Result
+	// Send delivers the message to one target. It must classify every failure
+	// into exactly one ResultClass; returning an unclassified error is a bug.
+	//
+	// The target is passed rather than folded into the message because it is
+	// the envelope, not the content: a channel that does its own addressing
+	// reads target.Recipients, and one that does not ignores the argument
+	// entirely.
+	Send(ctx context.Context, msg *message.Message, target Target) Result
 
 	// Test performs a connectivity self-check without sending a real
 	// notification. Used by the operator UI (M5) and by startup validation.

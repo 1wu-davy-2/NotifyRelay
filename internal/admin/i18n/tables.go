@@ -32,19 +32,20 @@ var zh = Messages{
 			"只能重新创建一个并放到原来用的地方。",
 		ConfirmReplay: "重投投递 %s？\n\n" +
 			"它会带着全新的尝试预算回到队列，并再次投递。",
-		ReplayedFlash:    "已重投 %s",
-		KeyNameRequired:  "请先给密钥起个名字——审计记录里显示的就是它。",
-		CopyTokenPrompt:  "立即复制——不会再次显示：",
-		PasswordsNoMatch: "两次输入的密码不一致。",
-		SetupFailed:      "账号创建失败",
-		CopyManualPrompt: "用 Ctrl+C / Cmd+C 复制：",
-		TestFailed:       "%s——%s",
-		TestNotifyQueued: "测试通知已入队",
-		KeyStateEnabled:  "%s 已启用",
-		KeyStateDisabled: "%s 已禁用",
-		DiscardChanges:   "这个表单有未保存的改动，离开会丢掉它们。",
-		FixMarkedFields:  "请修正标出的字段。",
-		PasswordSet:      "密码已修改。",
+		ReplayedFlash:      "已重投 %s",
+		KeyNameRequired:    "请先给密钥起个名字——审计记录里显示的就是它。",
+		CopyTokenPrompt:    "立即复制——不会再次显示：",
+		PasswordsNoMatch:   "两次输入的密码不一致。",
+		SetupFailed:        "账号创建失败",
+		CopyManualPrompt:   "用 Ctrl+C / Cmd+C 复制：",
+		TestFailed:         "%s——%s",
+		TestNotifyQueued:   "测试通知已入队",
+		KeyStateEnabled:    "%s 已启用",
+		KeyStateDisabled:   "%s 已禁用",
+		KeyRecipientsSaved: "%s 的可发往收件人已更新",
+		DiscardChanges:     "这个表单有未保存的改动，离开会丢掉它们。",
+		FixMarkedFields:    "请修正标出的字段。",
+		PasswordSet:        "密码已修改。",
 	},
 	// ------------------------------------------------------------ brand
 	AppName: "信使中枢",
@@ -176,8 +177,9 @@ var zh = Messages{
 	ChannelGoneHead:        "这个渠道不存在",
 	ChannelGoneBody: "名为 %s 的渠道已经被删除，或者从来没有存在过。" +
 		"保存这个表单会新建它——如果你要的是新建，请用「新建渠道」。",
-	TestNotifyButton:  "发送测试通知",
-	TestNotifyHeading: "发送测试通知",
+	TestNotifyButton:         "发送测试通知",
+	TestNotifyNeedsRecipient: "该渠道没有固定收件人，测试通知无处可发。先给它填上收件人，或改用通知 API 并带上 to 字段。",
+	TestNotifyHeading:        "发送测试通知",
 	TestNotifyIntro: "发一条真实的通知，走完整的投递链路：入队 → worker → 渠道 → 尝试记录。" +
 		"这是唯一能证明「通知真的会到」的操作——「测试连通性」只能证明配置能被解析，" +
 		"而且对其中五种渠道类型它连网络都不会碰。",
@@ -259,17 +261,27 @@ var zh = Messages{
 		"也是半年后你判断它能不能删时要读的东西。",
 	KeysConfiguredNotice: "有 %d 个密钥来自配置文件。它们照常工作，也列在下方，" +
 		"但不能在这里修改——改配置文件才会改它们。",
-	KeysTableName:     "名称",
-	KeysTableSource:   "来源",
-	KeysTableStatus:   "状态",
-	KeysTableCreated:  "创建时间",
-	KeysTableLastUsed: "最近使用",
-	KeysEmptyTitle:    "还没有密钥",
-	KeysEmptyBody:     "在创建密钥之前，通知 API 的所有请求都返回 <code>401</code>。",
-	KeysDialogHeading: "立即复制",
-	KeysDialogBody:    "这是 token 唯一一次显示。它不以任何可读回的形式存储。",
-	KeysDialogCopy:    "复制",
-	KeysDialogDone:    "完成",
+	KeysTableName:       "名称",
+	KeysTableSource:     "来源",
+	KeysTableStatus:     "状态",
+	KeysTableCreated:    "创建时间",
+	KeysTableLastUsed:   "最近使用",
+	KeysTableRecipients: "可发往",
+	KeysRecipientsLabel: "可发往的收件人",
+	KeysRecipientsHint:  "@example.com",
+	KeysRecipientsDesc: "留空表示一个都不许：这个密钥只能发到渠道自己配置好的目的地。" +
+		"要让它指定收件人（注册邮件、密码重置这类），在这里写允许的地址模式，" +
+		"用逗号分隔。三种写法：*（任意地址）、@example.com（该域名，不含子域）、" +
+		"user@example.com（单个地址）。",
+	KeysRecipientsNone:    "仅渠道目的地",
+	KeysRecipientsEdit:    "改收件人",
+	KeysRecipientsHeading: "可发往的收件人",
+	KeysEmptyTitle:        "还没有密钥",
+	KeysEmptyBody:         "在创建密钥之前，通知 API 的所有请求都返回 <code>401</code>。",
+	KeysDialogHeading:     "立即复制",
+	KeysDialogBody:        "这是 token 唯一一次显示。它不以任何可读回的形式存储。",
+	KeysDialogCopy:        "复制",
+	KeysDialogDone:        "完成",
 
 	// --------------------------------------------------------- api docs
 	APIDocsIntro: "上游只需接入一次。下面是发一条通知、以及查它到底送出去了没有的全部接口。" +
@@ -288,7 +300,29 @@ var zh = Messages{
 	APIDocsExamplesIntro: "每个示例都是完整的：发一条通知，然后按 ID 查它的结果。全部默认校验证书——" +
 		"<strong>token 走的是请求头，关掉校验等于把它交给链路上的任何人</strong>，" +
 		"所以这里没有任何一个示例提供关闭校验的写法。",
-	APIDocsCopy:          "复制",
+	APIDocsCopy:              "复制",
+	APIDocsRecipientsHeading: "收件人由请求指定",
+	APIDocsRecipientsIntro: "上面的示例都发往渠道自己配置好的目的地——告警要的就是这个。" +
+		"注册邮件、密码重置这类事务邮件的收件人只存在于请求里，在通知体里加一个 <code>to</code> 字段：",
+	APIDocsRecipientsSame: "下面这种写法完全等价：地址写在目标 URL 里，" +
+		"<code>?via=</code> 指定借用哪个邮件实例的服务器与凭据。",
+	APIDocsRecipientsReplace: "请求给的收件人<strong>替换</strong>渠道配置里的，不是追加。" +
+		"否则一个固定收件人（合规抄送、公共邮箱）会收到每封发给别人的密码重置邮件。",
+	APIDocsRecipientsAllowlist: "收件人要过 API 密钥的 <code>allowed_recipients</code> 白名单，" +
+		"两种写法都要过。空白名单表示一个都不许——只发告警的密钥不用配，要发事务邮件就得在密钥页显式授权。",
+	APIDocsRecipientsExclusive: "<code>to</code> 与 <code>mailto://</code> 目标不能同时出现，" +
+		"那是同一个问题的两个答案，合并会发到你没写过的地址。",
+	APIDocsRecipientsExampleTo: `{
+  "targets": ["email:tx"],
+  "to":      ["user@example.com"],
+  "title":   "重置密码",
+  "body":    "https://example.com/reset/abc"
+}`,
+	APIDocsRecipientsExampleURL: `{
+  "targets": ["mailto://user@example.com?via=tx"],
+  "title":   "重置密码",
+  "body":    "https://example.com/reset/abc"
+}`,
 	APIDocsEndpointsHead: "端点",
 	APIDocsTableMethod:   "方法",
 	APIDocsTablePath:     "路径",
@@ -336,6 +370,8 @@ var zh = Messages{
 	ErrBreakerDisabled:       "本部署未启用熔断器",
 	ErrChannelBuildFailed:    "无法按该配置构造渠道",
 	ErrChannelDisabled:       "该渠道已禁用；先启用再发送",
+	ErrChannelNeedsRecipient: "该渠道没有配置固定收件人，测试通知无处可发；先给它填上收件人，或改用通知 API 并带上 to 字段",
+	ErrKeyRecipientPattern:   "%s 不是合法的收件人模式；只支持 *、@域名、完整地址三种写法",
 	ErrNoQueue:               "本部署没有投递队列",
 	ErrEnqueueFailed:         "通知入队失败",
 	ErrTestMessageIncomplete: "标题和正文都必须填",
@@ -349,7 +385,6 @@ var zh = Messages{
 	ErrNoKeyStore:            "本部署没有 API 密钥存储",
 	ErrKeyNameRequired:       "必须填名称",
 	ErrKeyCreateFailed:       "密钥创建失败",
-	ErrKeyEnabledRequired:    "缺少 enabled 字段",
 	ErrKeyUnreadable:         "密钥读取失败",
 	ErrKeyNotFound:           "没有这个密钥 ID",
 	ErrKeyUpdateFailed:       "密钥更新失败",
@@ -400,19 +435,20 @@ var en = Messages{
 		ConfirmReplay: "Replay delivery %s?\n\n" +
 			"It goes back to the queue with a fresh attempt budget and will be " +
 			"delivered again.",
-		ReplayedFlash:    "Replayed %s",
-		KeyNameRequired:  "Give the key a name first — it is what the audit trail will show.",
-		CopyTokenPrompt:  "Copy this now — it is not shown again:",
-		PasswordsNoMatch: "The two passwords do not match.",
-		SetupFailed:      "the account could not be created",
-		CopyManualPrompt: "Copy with Ctrl+C / Cmd+C:",
-		TestFailed:       "%s — %s",
-		TestNotifyQueued: "The test notification was queued",
-		KeyStateEnabled:  "%s is enabled",
-		KeyStateDisabled: "%s is disabled",
-		DiscardChanges:   "This form has unsaved changes. Leaving discards them.",
-		FixMarkedFields:  "Correct the marked fields.",
-		PasswordSet:      "The password was changed.",
+		ReplayedFlash:      "Replayed %s",
+		KeyNameRequired:    "Give the key a name first — it is what the audit trail will show.",
+		CopyTokenPrompt:    "Copy this now — it is not shown again:",
+		PasswordsNoMatch:   "The two passwords do not match.",
+		SetupFailed:        "the account could not be created",
+		CopyManualPrompt:   "Copy with Ctrl+C / Cmd+C:",
+		TestFailed:         "%s — %s",
+		TestNotifyQueued:   "The test notification was queued",
+		KeyStateEnabled:    "%s is enabled",
+		KeyStateDisabled:   "%s is disabled",
+		KeyRecipientsSaved: "%s: allowed recipients updated",
+		DiscardChanges:     "This form has unsaved changes. Leaving discards them.",
+		FixMarkedFields:    "Correct the marked fields.",
+		PasswordSet:        "The password was changed.",
 	},
 	// ------------------------------------------------------------ brand
 	AppName: "NotifyRelay",
@@ -547,8 +583,9 @@ var en = Messages{
 	ChannelGoneHead:     "That channel is not there",
 	ChannelGoneBody: "A channel named %s has been deleted, or never existed. " +
 		"Saving this form would create it — if that is what you want, use New channel.",
-	TestNotifyButton:  "Send a test notification",
-	TestNotifyHeading: "Send a test notification",
+	TestNotifyButton:         "Send a test notification",
+	TestNotifyNeedsRecipient: "This channel has no recipient of its own, so a test notification has nowhere to go. Give it one, or send through the notify API with a \"to\" field.",
+	TestNotifyHeading:        "Send a test notification",
 	TestNotifyIntro: "Sends a real notification through the whole delivery path: queue, worker, " +
 		"channel, attempt history. This is the only thing that shows a notification actually " +
 		"arrives — \"test connectivity\" only shows the configuration parses, and for five of " +
@@ -638,12 +675,22 @@ var en = Messages{
 	KeysConfiguredNotice: "%d key(s) come from the configuration file. They work, and they " +
 		"are listed below, but they cannot be changed here — editing the file is what " +
 		"changes those.",
-	KeysTableName:     "Name",
-	KeysTableSource:   "Source",
-	KeysTableStatus:   "Status",
-	KeysTableCreated:  "Created",
-	KeysTableLastUsed: "Last used",
-	KeysEmptyTitle:    "No keys yet",
+	KeysTableName:       "Name",
+	KeysTableSource:     "Source",
+	KeysTableStatus:     "Status",
+	KeysTableCreated:    "Created",
+	KeysTableLastUsed:   "Last used",
+	KeysTableRecipients: "May send to",
+	KeysRecipientsLabel: "Recipients this key may name",
+	KeysRecipientsHint:  "@example.com",
+	KeysRecipientsDesc: "Empty means none: the key can only reach the destinations a " +
+		"channel was configured with. To let it name its own recipients — registration mail, " +
+		"password resets — list the address patterns it may use, comma separated. Three forms: " +
+		"* (any address), @example.com (that domain, not subdomains), user@example.com (one address).",
+	KeysRecipientsNone:    "channel destinations only",
+	KeysRecipientsEdit:    "Recipients",
+	KeysRecipientsHeading: "Recipients this key may name",
+	KeysEmptyTitle:        "No keys yet",
 	KeysEmptyBody: "Until one exists, every request to the notification API is answered " +
 		"<code>401</code>.",
 	KeysDialogHeading: "Copy this now",
@@ -675,7 +722,36 @@ var en = Messages{
 		"All of them verify the certificate — <strong>the token travels in a request " +
 		"header, so turning verification off hands it to anyone on the path</strong> — " +
 		"which is why not one of them shows you how.",
-	APIDocsCopy:          "Copy",
+	APIDocsCopy:              "Copy",
+	APIDocsRecipientsHeading: "Recipients named by the request",
+	APIDocsRecipientsIntro: "Every sample above sends to the destination a channel " +
+		"was configured with — which is what an alert needs. Registration mail and password resets " +
+		"have a recipient that exists only in the request, so they add a <code>to</code> field:",
+	APIDocsRecipientsSame: "This spelling means exactly the same thing: the address is " +
+		"in the target URL, and <code>?via=</code> names the mail instance whose server and credentials " +
+		"are borrowed.",
+	APIDocsRecipientsReplace: "Recipients from the request <strong>replace</strong> the " +
+		"ones in the channel configuration rather than adding to them. Appending would mean a fixed " +
+		"recipient — a compliance copy, a shared mailbox — receives every password-reset link addressed " +
+		"to somebody else.",
+	APIDocsRecipientsAllowlist: "Recipients are checked against the API key's " +
+		"<code>allowed_recipients</code>, both spellings alike. An empty list means none: a key that only " +
+		"fires alerts needs nothing, and one that sends transactional mail is granted the addresses on " +
+		"the keys page.",
+	APIDocsRecipientsExclusive: "<code>to</code> and a <code>mailto://</code> target " +
+		"cannot appear together — they are two answers to one question, and merging them would send to " +
+		"an address you never wrote.",
+	APIDocsRecipientsExampleTo: `{
+  "targets": ["email:tx"],
+  "to":      ["user@example.com"],
+  "title":   "Reset your password",
+  "body":    "https://example.com/reset/abc"
+}`,
+	APIDocsRecipientsExampleURL: `{
+  "targets": ["mailto://user@example.com?via=tx"],
+  "title":   "Reset your password",
+  "body":    "https://example.com/reset/abc"
+}`,
 	APIDocsEndpointsHead: "Endpoints",
 	APIDocsTableMethod:   "Method",
 	APIDocsTablePath:     "Path",
@@ -725,6 +801,8 @@ var en = Messages{
 	ErrBreakerDisabled:       "the circuit breaker is not enabled in this deployment",
 	ErrChannelBuildFailed:    "the channel could not be built from its configuration",
 	ErrChannelDisabled:       "the channel is disabled; enable it before sending",
+	ErrChannelNeedsRecipient: "this channel has no recipient of its own, so a test notification has nowhere to go; give it one, or send through the notify API with a \"to\" field",
+	ErrKeyRecipientPattern:   "%s is not a valid recipient pattern; use \"*\", \"@domain\" or a full address",
 	ErrNoQueue:               "this deployment has no delivery queue",
 	ErrEnqueueFailed:         "the notification could not be queued",
 	ErrTestMessageIncomplete: "both a title and a body are required",
@@ -739,7 +817,6 @@ var en = Messages{
 	ErrNoKeyStore:           "this deployment has no store for API keys",
 	ErrKeyNameRequired:      "a name is required",
 	ErrKeyCreateFailed:      "the key could not be created",
-	ErrKeyEnabledRequired:   "enabled is required",
 	ErrKeyUnreadable:        "the key could not be read",
 	ErrKeyNotFound:          "no key with that id",
 	ErrKeyUpdateFailed:      "the key could not be updated",

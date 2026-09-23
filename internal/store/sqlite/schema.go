@@ -14,7 +14,15 @@ const schema = `
 CREATE TABLE IF NOT EXISTS deliveries (
     id              TEXT    PRIMARY KEY,
     request_id      TEXT    NOT NULL,
+    -- target is the reference the caller wrote, echoed back to them. channel is
+    -- the instance it resolved to at accept time, which is what the queue, the
+    -- metrics and "show me everything for oncall" all key on — one column
+    -- cannot be both without making the other one unstable.
     target          TEXT    NOT NULL,
+    channel         TEXT    NOT NULL DEFAULT '',
+    -- recipients is a JSON array of caller-supplied addresses, empty when the
+    -- channel's own configuration decided them.
+    recipients      TEXT    NOT NULL DEFAULT '',
     channel_type    TEXT    NOT NULL,
     status          TEXT    NOT NULL,
     attempts        INTEGER NOT NULL DEFAULT 0,
@@ -162,7 +170,11 @@ CREATE TABLE IF NOT EXISTS api_keys (
     key_hash     TEXT    NOT NULL UNIQUE,
     enabled      INTEGER NOT NULL DEFAULT 1,
     created_at   INTEGER NOT NULL,
-    last_used_at INTEGER
+    last_used_at INTEGER,
+    -- JSON array of address patterns this key may name as a recipient. Empty
+    -- means none, which is the safe reading: a key created before this column
+    -- existed must not silently gain the right to address anyone.
+    allowed_recipients TEXT NOT NULL DEFAULT ''
 );
 
 -- The operator's sign-in.

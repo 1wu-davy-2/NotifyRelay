@@ -646,6 +646,16 @@
 
   /* -------------------------------------------------------------- API keys */
 
+  /* Comma separated, because that is how the operator thinks about it, and
+   * split here rather than server side so that the server keeps receiving a
+   * list and never has to guess whether a comma was meant as a separator. */
+  function parseRecipients(value) {
+    return String(value || "")
+      .split(",")
+      .map(function (s) { return s.trim(); })
+      .filter(function (s) { return s !== ""; });
+  }
+
   var createKey = document.getElementById("create-key");
   if (createKey) {
     createKey.addEventListener("click", function () {
@@ -656,15 +666,81 @@
         return;
       }
 
-      request("POST", "/admin/api/keys", { name: name })
+      var recipients = document.getElementById("key-recipients");
+      var body = { name: name };
+      if (recipients) {
+        body.allowed_recipients = parseRecipients(recipients.value);
+      }
+
+      request("POST", "/admin/api/keys", body)
         .then(function (res) {
           input.value = "";
+          if (recipients) { recipients.value = ""; }
           // Deliberately no reload here. The token exists only in this response,
           // and a reload is how it would be lost — the list is refreshed when
           // the dialog closes instead.
           showToken(res.token);
         })
         .catch(function (err) { window.alert(err.message); });
+    });
+  }
+
+  /* ------------------------------------------------- editing a key's list */
+
+  var keyRecipientsDialog = document.getElementById("key-recipients-dialog");
+  var keyRecipientsId = null;
+  var keyRecipientsKeyName = "";
+
+  document.addEventListener("click", function (event) {
+    var target = event.target;
+    if (!target.dataset || !target.dataset.keyRecipients) { return; }
+
+    keyRecipientsId = target.dataset.keyRecipients;
+    keyRecipientsKeyName = target.dataset.keyName || keyRecipientsId;
+
+    var named = document.getElementById("key-recipients-name");
+    if (named) { named.textContent = keyRecipientsKeyName; }
+
+    var input = document.getElementById("key-recipients-edit");
+    if (input) { input.value = target.dataset.keyAllowed || ""; }
+
+    var result = document.getElementById("key-recipients-result");
+    if (result) { result.hidden = true; }
+
+    if (keyRecipientsDialog) { keyRecipientsDialog.showModal(); }
+  });
+
+  var saveKeyRecipients = document.getElementById("save-key-recipients");
+  if (saveKeyRecipients) {
+    saveKeyRecipients.addEventListener("click", function () {
+      if (!keyRecipientsId) { return; }
+
+      var input = document.getElementById("key-recipients-edit");
+      var result = document.getElementById("key-recipients-result");
+
+      /* An empty box is sent as an empty list, which the server reads as "this
+       * key may address nobody" — the same thing it means on the create form.
+       * Sending nothing at all would mean "leave it alone", which is the one
+       * reading an operator clearing the box cannot have intended. */
+      request("POST", "/admin/api/keys/" + encodeURIComponent(keyRecipientsId),
+              { allowed_recipients: parseRecipients(input.value) })
+        .then(function () {
+          if (keyRecipientsDialog) { keyRecipientsDialog.close(); }
+          window.location.href = "/admin/keys?ok=" +
+            encodeURIComponent(fill(t("KeyRecipientsSaved"), [keyRecipientsKeyName]));
+        })
+        .catch(function (err) {
+          if (result) { say(result, err.message, false); }
+          else { window.alert(err.message); }
+        });
+    });
+  }
+
+  var cancelKeyRecipients = document.getElementById("cancel-key-recipients");
+  if (cancelKeyRecipients) {
+    cancelKeyRecipients.addEventListener("click", function () {
+      keyRecipientsId = null;
+      if (keyRecipientsDialog) { keyRecipientsDialog.close(); }
     });
   }
 

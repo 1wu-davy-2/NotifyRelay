@@ -3,6 +3,7 @@ package channel
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -15,6 +16,13 @@ type Factory func(instance string, cfg map[string]any) (Channel, error)
 var (
 	mu       sync.RWMutex
 	registry = make(map[string]Descriptor)
+	// schemes indexes descriptors by their target URL scheme.
+	//
+	// Built here rather than searched on demand because it is read on the path
+	// of every delivery that arrives as a URL, and because a duplicate scheme
+	// is a registration error worth catching at startup: two channel types
+	// claiming "mailto" would make a target's meaning depend on init order.
+	schemes = make(map[string]Descriptor)
 )
 
 // Register makes a channel type available under the given type name.
@@ -32,13 +40,46 @@ func Register(d Descriptor) {
 	if err := checkSchema(d.Type, d.ParamSchema); err != nil {
 		panic(err)
 	}
+	if err := checkTargetScheme(d); err != nil {
+		panic(err)
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
 	if _, dup := registry[d.Type]; dup {
 		panic(fmt.Sprintf("channel: duplicate registration for type %q", d.Type))
 	}
+	if d.TargetScheme != "" {
+		if _, dup := schemes[d.TargetScheme]; dup {
+			panic(fmt.Sprintf("channel: type %q claims URL scheme %q, which is already taken",
+				d.Type, d.TargetScheme))
+		}
+		schemes[d.TargetScheme] = d
+	}
 	registry[d.Type] = d
+}
+
+// checkTargetScheme rejects a half-declared URL form at registration time.
+//
+// A scheme with no parser would parse a target into nothing, and a parser with
+// no scheme would never be called at all — the second is the worse of the two,
+// because the channel author believes they have shipped a feature.
+func checkTargetScheme(d Descriptor) error {
+	if d.TargetScheme == "" && d.ParseTarget == nil {
+		return nil
+	}
+	if d.TargetScheme == "" {
+		return fmt.Errorf("channel %q: declares a target parser but no scheme", d.Type)
+	}
+	if d.ParseTarget == nil {
+		return fmt.Errorf("channel %q: declares target scheme %q but no parser to read it",
+			d.Type, d.TargetScheme)
+	}
+	if d.TargetScheme != strings.ToLower(d.TargetScheme) || strings.ContainsAny(d.TargetScheme, ": /") {
+		return fmt.Errorf("channel %q: target scheme %q must be lowercase and free of colons and slashes",
+			d.Type, d.TargetScheme)
+	}
+	return nil
 }
 
 // checkSchema rejects a self-contradictory schema at registration time, so a
@@ -150,6 +191,19 @@ func Descriptors() []Descriptor {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Type < out[j].Type })
 	return out
+}
+
+// LookupScheme returns the descriptor that answers to a target URL scheme.
+//
+// This is the whole of the router's knowledge about URLs: it cuts a scheme off
+// a target, asks here, and lets the channel read the rest. A router that knew
+// "mailto" would be a router that has to change when a channel is added.
+func LookupScheme(scheme string) (Descriptor, bool) {
+	mu.RLock()
+	defer mu.RUnlock()
+
+	d, ok := schemes[strings.ToLower(scheme)]
+	return d, ok
 }
 
 // Lookup returns the descriptor for a channel type.

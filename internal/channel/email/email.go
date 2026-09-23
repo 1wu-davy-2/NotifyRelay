@@ -21,12 +21,23 @@ import (
 
 func init() {
 	channel.Register(channel.Descriptor{
-		Type:        "email",
-		ParamSchema: paramSchema(),
-		Capability:  capability(),
-		Factory:     New,
+		Type:         "email",
+		ParamSchema:  paramSchema(),
+		Capability:   capability(),
+		Factory:      New,
+		TargetScheme: "mailto",
+		ParseTarget:  parseTarget,
 	})
 }
+
+// maxRecipients bounds one delivery's recipient list.
+//
+// It matters more than it looks: Send opens one SMTP session per recipient, so
+// a caller who chooses the list chooses how many connections this channel makes
+// on one unit of its quota. The number matches what the SMTP inbound path
+// already accepts in a single transaction (internal/smtpin), so a message that
+// can arrive can also be forwarded.
+const maxRecipients = 50
 
 // capability is declared once so the registered descriptor and a live
 // instance cannot disagree.
@@ -37,10 +48,12 @@ func capability() channel.Capability {
 		SupportedFormats:  []message.Format{message.FormatText, message.FormatHTML},
 		SupportAttachment: false, // M2+
 		OverflowMode:      channel.OverflowTruncate,
+		MaxRecipients:     maxRecipients,
 	}
 }
 
-// Channel delivers notifications to a fixed set of recipients.
+// Channel delivers notifications to its configured recipients, or to the ones
+// a caller names.
 type Channel struct {
 	instance string
 	cfg      Config
@@ -81,20 +94,44 @@ func New(instance string, raw map[string]any) (channel.Channel, error) {
 func (c *Channel) Type() string { return "email" }
 
 // Capability implements channel.Channel.
-func (c *Channel) Capability() channel.Capability { return capability() }
+//
+// NeedsRecipients is per instance: an email channel either has recipients
+// configured or it is one that can only be used by a caller naming its own.
+func (c *Channel) Capability() channel.Capability {
+	capability := capability()
+	capability.NeedsRecipients = len(c.cfg.To) == 0
+	return capability
+}
 
 // ParamSchema implements channel.Channel.
 func (c *Channel) ParamSchema() []channel.ParamSpec { return paramSchema() }
 
-// Send delivers the message to every configured recipient.
+// Send delivers the message to every recipient of this delivery.
 //
 // One SMTP transaction per recipient rather than a single transaction with
 // several RCPTs. That costs an extra connection per recipient and buys two
 // things worth more here: an exact per-recipient outcome, and not disclosing
 // the recipient list to every recipient.
-func (c *Channel) Send(ctx context.Context, msg *message.Message) channel.Result {
-	recipients := make([]channel.Recipient, 0, len(c.cfg.To))
-	for _, to := range c.cfg.To {
+func (c *Channel) Send(ctx context.Context, msg *message.Message, target channel.Target) channel.Result {
+	// The caller's list wins outright when there is one. Appending to the
+	// configured list instead would mean a fixed recipient — a compliance copy,
+	// a shared mailbox — silently receives every password-reset link that was
+	// addressed to somebody else.
+	addrs := target.Recipients
+	if len(addrs) == 0 {
+		addrs = c.cfg.To
+	}
+	if len(addrs) == 0 {
+		// Nothing to retry: no attempt at retrying produces an address. The
+		// class is PERMANENT so the queue gives up rather than holding the
+		// message for the retention window.
+		return channel.Permanent(
+			fmt.Errorf("channel %q has no recipients configured and the request named none", c.instance),
+			"no recipients for this delivery")
+	}
+
+	recipients := make([]channel.Recipient, 0, len(addrs))
+	for _, to := range addrs {
 		res := c.deliver(ctx, msg, to)
 		recipients = append(recipients, channel.Recipient{
 			Address:  to,

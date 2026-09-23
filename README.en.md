@@ -122,6 +122,30 @@ curl -X POST http://127.0.0.1:8080/api/v1/notify \
 its digest is stored, so it cannot be shown again** — if it is lost, delete the
 key and make another.
 
+That one goes to the destination the channel was configured with, which is what
+an alert wants. **Registration mail and password resets** have a recipient that
+exists only in the request — add a `to` field, or the equivalent `mailto://`
+target:
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/v1/notify \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "targets": ["email:tx"],
+        "to":      ["user@example.com"],
+        "title":   "Reset your password",
+        "body":    "https://example.com/reset/abc"
+      }'
+```
+
+Two things to know first: those recipients **replace** the channel's configured
+ones rather than adding to them, and they are checked against the API key's
+**recipient allow list** — empty means none, so an alerting key needs nothing
+while a transactional one is granted `@yourdomain` or `*` on the keys page. Both
+rules exist so that this does not become a service that mails anybody for
+whoever holds a key.
+
 The response is `202` with a delivery id, because delivery is asynchronous by
 default:
 
@@ -180,7 +204,8 @@ sending MTA retries on its own schedule, permanent becomes 5xx.
 
 | Field | Required | |
 |---|---|---|
-| `targets` | ✅ | Channel aliases, or `type:alias`. Mixable |
+| `targets` | ✅ | Channel aliases, `type:alias`, or a channel URL `mailto://user@example.com?via=tx`. Mixable |
+| `to` | | Recipients, for channels that take them (email today). Equivalent to a `mailto://` target; use one or the other |
 | `title` | ✅ | |
 | `body` | ✅ | |
 | `format` | | `text` \| `markdown` \| `html`, default `text`. **Declared by the caller; the service does not guess** |

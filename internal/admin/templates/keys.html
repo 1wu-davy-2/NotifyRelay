@@ -17,11 +17,21 @@
     <h2>{{.T.KeysNewHeading}}</h2>
     <div>
       <label for="key-name">{{.T.KeysNameLabel}}</label>
-      <div class="row">
-        <input type="text" id="key-name" placeholder="{{.T.KeysNameHint}}" autocomplete="off">
-        <button type="button" class="primary" id="create-key">{{.T.KeysCreateButton}}</button>
-      </div>
+      <input type="text" id="key-name" placeholder="{{.T.KeysNameHint}}" autocomplete="off">
       <p class="desc">{{.T.KeysNameDesc}}</p>
+    </div>
+
+    {{/* The one field here that decides what a key can reach beyond the
+         destinations an operator already configured. Empty is the safe default
+         and stays that way: a key that only fires alerts never needs it. */}}
+    <div>
+      <label for="key-recipients">{{.T.KeysRecipientsLabel}}</label>
+      <input type="text" id="key-recipients" placeholder="{{.T.KeysRecipientsHint}}" autocomplete="off">
+      <p class="desc">{{.T.KeysRecipientsDesc}}</p>
+    </div>
+
+    <div class="row">
+      <button type="button" class="primary" id="create-key">{{.T.KeysCreateButton}}</button>
     </div>
   </section>
 
@@ -39,6 +49,7 @@
           <th>{{.T.KeysTableStatus}}</th>
           <th>{{.T.KeysTableCreated}}</th>
           <th>{{.T.KeysTableLastUsed}}</th>
+          <th>{{.T.KeysTableRecipients}}</th>
           <th></th>
         </tr>
       </thead>
@@ -68,6 +79,13 @@
             {{if .LastUsedAt}}{{.LastUsedAt}}
             {{else}}<span class="muted">{{$.T.CommonNever}}</span>{{end}}
           </td>
+          {{/* The default — a key that may address nobody — is spelled out
+               rather than left blank: an empty cell reads like a value nobody
+               filled in, and this one is a decision. */}}
+          <td class="muted">
+            {{if .AllowedRecipients}}{{join .AllowedRecipients ", "}}
+            {{else}}{{$.T.KeysRecipientsNone}}{{end}}
+          </td>
           <td class="actions">
             {{if eq .Source "database"}}
               {{if .Enabled}}
@@ -75,6 +93,9 @@
               {{else}}
               <button type="button" data-enable-key="{{.ID}}">{{$.T.CommonEnable}}</button>
               {{end}}
+              <button type="button" data-key-recipients="{{.ID}}"
+                      data-key-name="{{.Name}}"
+                      data-key-allowed="{{join .AllowedRecipients ", "}}">{{$.T.KeysRecipientsEdit}}</button>
               <button type="button" class="danger" data-delete-key="{{.ID}}" data-key-name="{{.Name}}">{{$.T.CommonDelete}}</button>
             {{end}}
           </td>
@@ -101,6 +122,24 @@
        cannot dismiss the one view of a value that is never stored — and the
        token is in this dialog and the response that created it, nowhere
        else. */}}
+  {{/* Editing the allow list of a key that already exists.
+       A dialog rather than a form on the page because it belongs to one row:
+       the row's button carries the key's name and its current list, so the
+       dialog never has to fetch them and the operator never edits a key they
+       did not mean to. */}}
+  <dialog id="key-recipients-dialog">
+    <h3>{{.T.KeysRecipientsHeading}} — <code id="key-recipients-name"></code></h3>
+    <label for="key-recipients-edit">{{.T.KeysRecipientsLabel}}</label>
+    <input type="text" id="key-recipients-edit" autocomplete="off"
+           placeholder="{{.T.KeysRecipientsHint}}">
+    <p class="desc">{{.T.KeysRecipientsDesc}}</p>
+    <div class="row">
+      <button type="button" class="primary" id="save-key-recipients">{{.T.CommonSave}}</button>
+      <button type="button" id="cancel-key-recipients">{{.T.CommonCancel}}</button>
+    </div>
+    <p class="flash" id="key-recipients-result" hidden></p>
+  </dialog>
+
   <dialog id="token-dialog">
     <h3>{{.T.KeysDialogHeading}}</h3>
     <p class="muted">{{.T.KeysDialogBody}}</p>

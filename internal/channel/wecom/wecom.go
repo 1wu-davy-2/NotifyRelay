@@ -114,7 +114,7 @@ func (c *Channel) Capability() channel.Capability { return capability(c.cfg.Rate
 func (c *Channel) ParamSchema() []channel.ParamSpec { return paramSchema() }
 
 // Send implements channel.Channel.
-func (c *Channel) Send(ctx context.Context, msg *message.Message) channel.Result {
+func (c *Channel) Send(ctx context.Context, msg *message.Message, _ channel.Target) channel.Result {
 	if c.cfg.Mode == ModeWebhook {
 		return c.sendWebhook(ctx, msg)
 	}

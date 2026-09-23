@@ -41,8 +41,18 @@
           <td class="actions">
             {{/* The only button on this row that proves a notification arrives.
                  "Test" answers a narrower question and, for five of the six
-                 channel types, does not touch the network at all. */}}
+                 channel types, does not touch the network at all.
+
+                 Disabled when the channel has no recipient of its own: the
+                 test names none, so the delivery could only come back
+                 PERMANENT, and a button whose only outcome is a failure the
+                 operator did not cause is worse than one that says why it is
+                 off. */}}
+            {{if .NeedsRecipients}}
+            <button type="button" disabled title="{{$.T.TestNotifyNeedsRecipient}}">{{$.T.TestNotifyButton}}</button>
+            {{else}}
             <button type="button" class="primary" data-test-notify="{{.Name}}">{{$.T.TestNotifyButton}}</button>
+            {{end}}
             <button type="button" data-test="{{.Name}}">{{$.T.CommonTest}}</button>
             <button type="button" data-reset-breaker="{{.Name}}">{{$.T.ChannelsResetBreaker}}</button>
             <button type="button" class="danger" data-delete="{{.Name}}">{{$.T.CommonDelete}}</button>

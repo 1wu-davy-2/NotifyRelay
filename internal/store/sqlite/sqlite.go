@@ -9,6 +9,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -125,6 +126,32 @@ func (s *Store) migrate(ctx context.Context) error {
 	return s.addColumns(ctx)
 }
 
+// encodeList and decodeList move a []string through a TEXT column as JSON.
+//
+// Separate from encodeJSON/decodeJSON because those turn an empty value into
+// "{}" — the right default for a map column and the wrong one for a list, where
+// the empty string has to read back as "no elements" rather than as a parse
+// error. An empty list and an absent one are the same fact here, so they are
+// stored the same way.
+func encodeList(v []string) (string, error) {
+	if len(v) == 0 {
+		return "", nil
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func decodeList(raw string, v *[]string) error {
+	if raw == "" {
+		*v = nil
+		return nil
+	}
+	return json.Unmarshal([]byte(raw), v)
+}
+
 // addColumns brings an existing database up to a schema that gained a column.
 //
 // CREATE TABLE IF NOT EXISTS is the whole migration strategy, and it has one
@@ -138,8 +165,28 @@ func (s *Store) migrate(ctx context.Context) error {
 // retyping one needs a real migration with a data copy, and that is a different
 // piece of work from "the new build should still start".
 func (s *Store) addColumns(ctx context.Context) error {
-	added := []struct{ table, column, ddl string }{
-		{"attempts", "skip_reason", `ALTER TABLE attempts ADD COLUMN skip_reason TEXT NOT NULL DEFAULT ''`},
+	added := []struct {
+		table, column, ddl string
+		// backfill runs once, immediately after the column is created, for a
+		// column whose correct value is derivable from the rows already there.
+		// Without it every existing row gets the column's default, and the
+		// default of a column that was added to stop two facts sharing one
+		// field is not a fact at all.
+		backfill string
+	}{
+		{table: "attempts", column: "skip_reason",
+			ddl: `ALTER TABLE attempts ADD COLUMN skip_reason TEXT NOT NULL DEFAULT ''`},
+		{table: "deliveries", column: "channel",
+			ddl: `ALTER TABLE deliveries ADD COLUMN channel TEXT NOT NULL DEFAULT ''`,
+			// Before this column existed, `target` held the resolved alias for
+			// rows written by the queue and the caller's string for rows
+			// written by nothing — the queue is the only writer, so the copy is
+			// exact.
+			backfill: `UPDATE deliveries SET channel = target WHERE channel = ''`},
+		{table: "deliveries", column: "recipients",
+			ddl: `ALTER TABLE deliveries ADD COLUMN recipients TEXT NOT NULL DEFAULT ''`},
+		{table: "api_keys", column: "allowed_recipients",
+			ddl: `ALTER TABLE api_keys ADD COLUMN allowed_recipients TEXT NOT NULL DEFAULT ''`},
 	}
 
 	for _, a := range added {
@@ -152,6 +199,11 @@ func (s *Store) addColumns(ctx context.Context) error {
 		}
 		if _, err := s.db.ExecContext(ctx, a.ddl); err != nil {
 			return fmt.Errorf("sqlite: add %s.%s: %w", a.table, a.column, err)
+		}
+		if a.backfill != "" {
+			if _, err := s.db.ExecContext(ctx, a.backfill); err != nil {
+				return fmt.Errorf("sqlite: backfill %s.%s: %w", a.table, a.column, err)
+			}
 		}
 	}
 	return nil

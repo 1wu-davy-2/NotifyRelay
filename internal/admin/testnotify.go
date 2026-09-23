@@ -86,6 +86,16 @@ func (h *handler) sendTestNotification(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A channel with no destination of its own — an email instance kept for
+	// transactional mail — can only ever fail a test: this endpoint names no
+	// recipient, and there is nowhere for the message to go. Refusing says that,
+	// and says what to do instead. The alternative is a delivery that turns up
+	// in the list as PERMANENT and reads like a broken channel.
+	if capability, ok := h.deps.Router.CapabilityOf(name); ok && capability.NeedsRecipients {
+		writeError(w, http.StatusConflict, "channel_needs_recipients", t.ErrChannelNeedsRecipient)
+		return
+	}
+
 	var req testNotificationRequest
 	if err := decode(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", t.ErrInvalidJSON)
@@ -105,7 +115,7 @@ func (h *handler) sendTestNotification(w http.ResponseWriter, r *http.Request) {
 
 	requestID := requestid.New()
 	deliveries, err := h.deps.Queue.Enqueue(r.Context(), requestID, msg,
-		[]queue.TargetSpec{{Target: name, ChannelType: cfg.Type}})
+		[]queue.TargetSpec{{Target: name, Channel: name, ChannelType: cfg.Type}})
 	if err != nil {
 		h.log.Error("admin: enqueueing a test notification failed", slog.String("error", err.Error()))
 		writeError(w, http.StatusServiceUnavailable, "queue_unavailable", t.ErrEnqueueFailed)

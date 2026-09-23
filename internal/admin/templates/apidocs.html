@@ -58,6 +58,28 @@
     {{end}}
   </div>
 
+  {{/* The one part of the request the samples do not show. They all send to a
+       channel's own destination, which is what an alert needs and what most
+       callers want. Transactional mail names its recipient per request, and
+       that is a different shape with rules of its own — three of which are
+       refusals a caller would otherwise meet by surprise. */}}
+  <h2>{{.T.APIDocsRecipientsHeading}}</h2>
+  <p class="muted">{{.T.APIDocsRecipientsIntro}}</p>
+
+  <pre><code>{{.T.APIDocsRecipientsExampleTo}}</code></pre>
+
+  <p class="muted">{{.T.APIDocsRecipientsSame}}</p>
+
+  <pre><code>{{.T.APIDocsRecipientsExampleURL}}</code></pre>
+
+  <div class="card">
+    <ul class="muted">
+      <li>{{.T.APIDocsRecipientsReplace}}</li>
+      <li>{{.T.APIDocsRecipientsAllowlist}}</li>
+      <li>{{.T.APIDocsRecipientsExclusive}}</li>
+    </ul>
+  </div>
+
   <h2>{{.T.APIDocsEndpointsHead}}</h2>
   <div class="table-wrap">
     <table>

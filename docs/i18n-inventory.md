@@ -4,6 +4,12 @@
 > 消息表的设计依据。每一条都对应代码里的真实字符串，行号对 `E:\opt\NotifyRelay` 当前工作区核过。
 >
 > 计划背景见 `docs/08-ui-plan.md` 第 1、2 段。
+>
+> **这是一份快照，不是索引。** 它记录的是 i18n 落地那一刻的清点结果；之后新增的文案
+> （M6 的 `KeysRecipients*`、`TestNotifyNeedsRecipient`、`APIDocsRecipients*`、
+> `KeyRecipientsSaved` 等）不在这份清单里，行号也会随代码漂移。**唯一的真相是
+> `internal/admin/i18n/messages.go` 的结构体**——编译器与
+> `i18n_test.go` 保证两张表都没有漏项，这份文档保证不了。
 
 ---
 
@@ -1106,8 +1112,13 @@ response and the channel still sees one message."），不是代码，中文界�
 2. **渠道校验错误也是用户可见的。** `channels.go:191` 把 `validateChannel` 的
    `err.Error()` 直接当 `writeError` 的消息发给前端，`app.js` 弹出来。这些错误来自
    `internal/channel` 的 `parseConfig`，例如
-   `parameter "to" must list at least one recipient`（`email/config.go:91`）、
    `"require_tls" cannot be true when "tls" is "none"`（`email/config.go:171`）。
+   > M6 更新：原先举的第二个例子 `parameter "to" must list at least one recipient`
+   > （旧 `email/config.go:91`）**已随 M6 删除**——`to` 现在是可选的，收件人可以由请求
+   > 指定。该行占用的 `config.go:91` 现为 `to` 的解析调用。新增的两条同类文案是
+   > `channel %q has no recipients configured and the request named none`
+   > （`email/email.go`，投递期）与 `target %q names no recipient`
+   > （`email/target.go`，`mailto://` 解析期），按本节的口径同样未翻译。
    它们**用 schema 名而不是界面标签**——这正是计划 §3.4 要修的问题，和翻译是同一处代码。
 3. **`channels.go:290` 的 `channel.Permanent(err, "the channel could not be built from its configuration")`**
    已经收进 `ErrChannelBuildFailed`，但各渠道 `Test()` 实现返回的 `Detail` 文案同样会经

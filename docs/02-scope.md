@@ -53,7 +53,8 @@ POST /api/v1/notify
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| `targets` | ✅ | 目标通道。可以是**通道别名**（`email:oncall`）或 **URL**（`mailto://...`）。**一次请求支持多个目标，服务端并发扇出** |
+| `targets` | ✅ | 目标通道。可以是**通道别名**（`email:oncall`）或 **URL**（`mailto://...`）。**一次请求支持多个目标，服务端并发扇出**。URL 形式在 **M6** 落地 |
+| `to` | | 本请求的收件人，M6 新增。与 `mailto://` 目标等价，二选一 |
 | `title` | ✅ | 标题 |
 | `body` | ✅ | 正文 |
 | `format` | | `text` \| `markdown` \| `html`，默认 `text`。**由调用方声明，服务端不猜**（抄 pushbits 的 `contentType` 思路） |
@@ -367,20 +368,23 @@ func (r *Router) Deliver(ctx context.Context, target Target, msg *Message) Resul
     return res
 }
 
-// resolve：别名 → 配置实例；URL → 按 scheme 造临时实例
-// 路由代码里没有任何 "email" / "dingtalk" 字样
-func (r *Router) resolve(t Target) (Channel, Config, error) {
-    if inst, ok := r.instances[t.Alias]; ok {   // 配置里定义的实例
-        return inst, inst.Cfg, nil
+// resolve：别名 → 配置实例；URL → 查注册表问 scheme 归谁，再由那个通道自己解析
+// 路由代码里没有任何 "email" / "mailto" / "dingtalk" 字样
+func (r *Router) resolveRef(ref string) (channel.Target, error) {
+    if d, ok := channel.LookupScheme(schemeOf(ref)); ok {
+        t, err := d.ParseTarget(ref)   // ← 通道自己的解析器
+        return t, err                  //    URL 里没有凭据，只有"借哪个实例"
     }
-    scheme := parseScheme(t.URL)                // mailto:// / dingtalk://
-    f, ok := registry[scheme]                   // ← 只查注册表
-    if !ok {
-        return nil, Config{}, ErrUnknownChannel(scheme)
-    }
-    ... 
+    name, wantType := splitRef(ref)    // 别名 / 类型:别名
+    ...
 }
 ```
+
+**与本节最初写法的偏离（M6 实测）**：原计划是「URL → 按 scheme 造临时实例」，
+实践中改成了「URL → 借用某个**已配置实例**的传输」。原因是临时实例需要凭据，
+而凭据只能来自配置——要么写进 URL（`mailto://user:pass@smtp.example.com`，
+凭据进日志和审计，正是 `03-plan.md` 反复要避免的），要么等于把实例配置重新拼一遍。
+借用的做法还顺带让配额、熔断、审计、密钥擦除**全部落在同一个实例上**，一行都不用改。
 
 ### 4.4 新增一个通道需要做什么
 

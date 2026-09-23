@@ -27,7 +27,7 @@ const (
 
 // Deliverer is what the SMTP layer needs from the core.
 type Deliverer interface {
-	Deliver(ctx context.Context, requestID, target string, msg *message.Message) router.TargetResult
+	Deliver(ctx context.Context, requestID string, target channel.Target, msg *message.Message) router.TargetResult
 	Instances() []string
 }
 
@@ -224,7 +224,12 @@ func (s *session) Data(r io.Reader) error {
 		out := *msg
 		out.Type = rcpt.typ
 
-		res := s.server.deliverer.Deliver(context.Background(), requestID, rcpt.alias, &out)
+		// No recipients: on this path the envelope recipient *is* the channel
+		// alias — the local part of the address is the routing instruction —
+		// so the addressing was consumed by the SMTP conversation itself and
+		// there is nothing left for the channel to be told.
+		res := s.server.deliverer.Deliver(context.Background(), requestID,
+			channel.Target{Ref: rcpt.alias}, &out)
 		switch res.Class() {
 		case channel.ClassSent:
 			// nothing to record here; the router already audited it

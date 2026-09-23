@@ -10,10 +10,15 @@ import (
 	"notifyrelay/internal/store"
 )
 
+// apiKeyColumns is the one list of columns every key query selects, so that a
+// column added here reaches the reader, the writer and the authentication path
+// together. scanAPIKey reads them positionally.
+const apiKeyColumns = `id, name, key_hash, enabled, created_at, last_used_at, allowed_recipients`
+
 // ListAPIKeys implements store.APIKeys.
 func (s *Store) ListAPIKeys(ctx context.Context) ([]*store.APIKey, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, key_hash, enabled, created_at, last_used_at
+		SELECT `+apiKeyColumns+`
 		FROM api_keys ORDER BY created_at DESC, id`)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list api keys: %w", err)
@@ -37,7 +42,7 @@ func (s *Store) ListAPIKeys(ctx context.Context) ([]*store.APIKey, error) {
 // GetAPIKey implements store.APIKeys.
 func (s *Store) GetAPIKey(ctx context.Context, id string) (*store.APIKey, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, key_hash, enabled, created_at, last_used_at
+		SELECT `+apiKeyColumns+`
 		FROM api_keys WHERE id = ?`, id)
 
 	k, err := scanAPIKey(row)
@@ -49,14 +54,20 @@ func (s *Store) GetAPIKey(ctx context.Context, id string) (*store.APIKey, error)
 
 // PutAPIKey implements store.APIKeys.
 func (s *Store) PutAPIKey(ctx context.Context, k *store.APIKey) error {
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO api_keys (id, name, key_hash, enabled, created_at, last_used_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+	allowed, err := encodeList(k.AllowedRecipients)
+	if err != nil {
+		return fmt.Errorf("sqlite: put api key: allowed recipients: %w", err)
+	}
+
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO api_keys (id, name, key_hash, enabled, created_at, last_used_at, allowed_recipients)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
-			name     = excluded.name,
-			key_hash = excluded.key_hash,
-			enabled  = excluded.enabled`,
-		k.ID, k.Name, k.KeyHash, boolInt(k.Enabled), toNanos(k.CreatedAt), nanosOrNull(k.LastUsedAt))
+			name               = excluded.name,
+			key_hash           = excluded.key_hash,
+			enabled            = excluded.enabled,
+			allowed_recipients = excluded.allowed_recipients`,
+		k.ID, k.Name, k.KeyHash, boolInt(k.Enabled), toNanos(k.CreatedAt), nanosOrNull(k.LastUsedAt), allowed)
 	if err != nil {
 		return fmt.Errorf("sqlite: put api key: %w", err)
 	}
@@ -83,7 +94,7 @@ func (s *Store) DeleteAPIKey(ctx context.Context, id string) (bool, error) {
 // that quietly honoured a revoked credential.
 func (s *Store) FindAPIKeyByHash(ctx context.Context, keyHash string) (*store.APIKey, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, key_hash, enabled, created_at, last_used_at
+		SELECT `+apiKeyColumns+`
 		FROM api_keys WHERE key_hash = ? AND enabled = 1`, keyHash)
 
 	k, err := scanAPIKey(row)
@@ -187,9 +198,13 @@ func scanAPIKey(sc scanner) (*store.APIKey, error) {
 		enabled    int
 		createdAt  int64
 		lastUsedAt sql.NullInt64
+		allowed    string
 	)
-	if err := sc.Scan(&k.ID, &k.Name, &k.KeyHash, &enabled, &createdAt, &lastUsedAt); err != nil {
+	if err := sc.Scan(&k.ID, &k.Name, &k.KeyHash, &enabled, &createdAt, &lastUsedAt, &allowed); err != nil {
 		return nil, err
+	}
+	if err := decodeList(allowed, &k.AllowedRecipients); err != nil {
+		return nil, fmt.Errorf("sqlite: api key %s: allowed recipients: %w", k.ID, err)
 	}
 
 	k.Enabled = enabled != 0

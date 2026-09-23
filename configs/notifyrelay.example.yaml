@@ -99,6 +99,23 @@ auth:
       key_hash: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
       enabled: true
 
+      # Which addresses this key may name as a recipient of a notification —
+      # the `to` field of POST /api/v1/notify, or a `mailto://` target.
+      #
+      # Omitted or empty means none: the key can only reach the destinations
+      # configured on the channels themselves, which is the right answer for an
+      # alerting key. A key that sends registration or password-reset mail needs
+      # a list, and giving it one is what stops the relay from being a way to
+      # mail anybody at all.
+      #
+      # Three forms, no glob library:
+      #   "*"                  any address
+      #   "@example.com"       that exact domain — not subdomains, and not
+      #                        notexample.com
+      #   "ops@example.com"    that one address
+      allowed_recipients: []
+      # e.g. allowed_recipients: ["@example.com"]
+
 retry:
   max_attempts: 5
   # Fixed increasing intervals, deliberately not exponential backoff: mail

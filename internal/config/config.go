@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"notifyrelay/internal/auth"
+	"notifyrelay/internal/recipients"
 	"notifyrelay/internal/secret"
 )
 
@@ -218,6 +219,11 @@ type APIKeyConfig struct {
 	Name    string `yaml:"name"`
 	KeyHash string `yaml:"key_hash"` // "sha256:<hex>", generate with --hash-key
 	Enabled *bool  `yaml:"enabled"`
+	// AllowedRecipients lists the address patterns this key may name as a
+	// recipient: "*", "@example.com" or "user@example.com". Omitted or empty
+	// means the key may name none and can only reach the destinations an
+	// operator configured on a channel.
+	AllowedRecipients []string `yaml:"allowed_recipients"`
 }
 
 // IsEnabled reports whether the key is active. Omitted means enabled.
@@ -411,6 +417,11 @@ func (c *Config) Validate() error {
 		if _, err := auth.ParseHash(k.KeyHash); err != nil {
 			errs = append(errs, fmt.Errorf("%s (%s): %w", where, k.Name, err))
 		}
+		for j, pattern := range k.AllowedRecipients {
+			if err := recipients.Validate(pattern); err != nil {
+				errs = append(errs, fmt.Errorf("%s (%s): allowed_recipients[%d]: %w", where, k.Name, j, err))
+			}
+		}
 	}
 
 	if c.Retry.MaxAttempts < 1 {
@@ -547,7 +558,12 @@ func (c *Config) Keys() ([]auth.Key, error) {
 		if err != nil {
 			return nil, fmt.Errorf("auth key %q: %w", k.Name, err)
 		}
-		keys = append(keys, auth.Key{Name: k.Name, Hash: sum, Enabled: k.IsEnabled()})
+		keys = append(keys, auth.Key{
+			Name:              k.Name,
+			Hash:              sum,
+			Enabled:           k.IsEnabled(),
+			AllowedRecipients: k.AllowedRecipients,
+		})
 	}
 	return keys, nil
 }

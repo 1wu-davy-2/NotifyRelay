@@ -99,7 +99,7 @@ func (c *Channel) Capability() channel.Capability { return capability(c.cfg.Rate
 func (c *Channel) ParamSchema() []channel.ParamSpec { return paramSchema() }
 
 // Send implements channel.Channel.
-func (c *Channel) Send(ctx context.Context, msg *message.Message) channel.Result {
+func (c *Channel) Send(ctx context.Context, msg *message.Message, _ channel.Target) channel.Result {
 	endpoint, err := signedURL(c.cfg.WebhookURL, c.cfg.Secret, c.now().UnixMilli())
 	if err != nil {
 		return channel.Permanent(err, "the webhook URL could not be signed")

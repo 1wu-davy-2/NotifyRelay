@@ -84,11 +84,13 @@ func parseConfigWith(raw map[string]any, specs []channel.ParamSpec) (Config, err
 		return cfg, err
 	}
 
+	// Recipients are optional here because they may instead come from the
+	// caller: the `to` field of a notify request, or a `mailto://` target.
+	// Whether either source supplied one is a delivery-time question, not a
+	// start-time one — a deployment configured for transactional mail has no
+	// fixed recipient at all.
 	if cfg.To, err = channel.StringSliceParam(raw, "to"); err != nil {
 		return cfg, err
-	}
-	if len(cfg.To) == 0 {
-		return cfg, fmt.Errorf("parameter \"to\" must list at least one recipient")
 	}
 
 	if err := cfg.parseTLS(raw); err != nil {
@@ -230,9 +232,14 @@ func paramSchema() []channel.ParamSpec {
 			Label: "From", Desc: "Envelope and header sender.",
 		},
 		{
-			Name: "to", Type: channel.ParamStringList, Required: true,
+			// Optional, because the caller may supply the recipients instead —
+			// `{"targets":["email:oncall"],"to":["user@example.com"]}` or a
+			// `mailto://user@example.com` target. An instance with no
+			// recipients configured can only be used that way.
+			Name: "to", Type: channel.ParamStringList,
 			Label: "Recipients",
-			Desc:  "One or more addresses. Each recipient is delivered independently.",
+			Desc: "One or more addresses, delivered to independently. " +
+				"May be left empty for a channel whose recipients come from the request.",
 		},
 		{
 			Name: "helo", Type: channel.ParamString,

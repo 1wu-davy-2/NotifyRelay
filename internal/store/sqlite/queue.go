@@ -11,7 +11,7 @@ import (
 	"notifyrelay/internal/store"
 )
 
-const deliveryColumns = `id, request_id, target, channel_type, status, attempts,
+const deliveryColumns = `id, request_id, target, channel, recipients, channel_type, status, attempts,
 	next_attempt_at, last_error, last_class, created_at, updated_at, claimed_at, sent_at`
 
 // Enqueue implements store.Queue.
@@ -28,9 +28,9 @@ func (s *Store) Enqueue(ctx context.Context, items []*store.Delivery) error {
 
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO deliveries
-			(id, request_id, target, channel_type, status, attempts,
+			(id, request_id, target, channel, recipients, channel_type, status, attempts,
 			 next_attempt_at, last_error, last_class, created_at, updated_at, claimed_at, sent_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`)
 	if err != nil {
 		return fmt.Errorf("sqlite: enqueue: prepare: %w", err)
 	}
@@ -41,8 +41,12 @@ func (s *Store) Enqueue(ctx context.Context, items []*store.Delivery) error {
 		if next.IsZero() {
 			next = d.CreatedAt
 		}
+		recipients, err := encodeList(d.Recipients)
+		if err != nil {
+			return fmt.Errorf("sqlite: enqueue %s: recipients: %w", d.ID, err)
+		}
 		if _, err := stmt.ExecContext(ctx,
-			d.ID, d.RequestID, d.Target, d.ChannelType, string(d.Status), d.Attempts,
+			d.ID, d.RequestID, d.Target, d.Channel, recipients, d.ChannelType, string(d.Status), d.Attempts,
 			toNanos(next), d.LastError, d.LastClass,
 			toNanos(d.CreatedAt), toNanos(d.UpdatedAt), toNanos(timeOrZero(d.SentAt)),
 		); err != nil {
@@ -449,20 +453,24 @@ type scannable interface {
 
 func scanDelivery(row scannable) (*store.Delivery, error) {
 	var (
-		d         store.Delivery
-		status    string
-		next      int64
-		created   int64
-		updated   int64
-		claimedAt int64
-		sentAt    int64
+		d          store.Delivery
+		status     string
+		next       int64
+		created    int64
+		updated    int64
+		claimedAt  int64
+		sentAt     int64
+		recipients string
 	)
 
 	if err := row.Scan(
-		&d.ID, &d.RequestID, &d.Target, &d.ChannelType, &status, &d.Attempts,
+		&d.ID, &d.RequestID, &d.Target, &d.Channel, &recipients, &d.ChannelType, &status, &d.Attempts,
 		&next, &d.LastError, &d.LastClass, &created, &updated, &claimedAt, &sentAt,
 	); err != nil {
 		return nil, err
+	}
+	if err := decodeList(recipients, &d.Recipients); err != nil {
+		return nil, fmt.Errorf("sqlite: delivery %s: recipients: %w", d.ID, err)
 	}
 
 	d.Status = store.Status(status)

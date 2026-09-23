@@ -38,9 +38,23 @@ func (s Status) Terminal() bool {
 
 // Delivery is one message bound for one channel instance.
 type Delivery struct {
-	ID          string
-	RequestID   string
-	Target      string // the channel alias, as the caller named it
+	ID        string
+	RequestID string
+	// Target is the reference the caller wrote, kept as they wrote it so an
+	// outcome can echo it back.
+	Target string
+	// Channel is the instance the target resolved to when the delivery was
+	// accepted.
+	//
+	// Recorded rather than re-derived, because the question it answers —
+	// "which instance" — has a different answer once the configuration changes,
+	// and this delivery was accepted against the configuration as it stood.
+	// Everything operational keys on it: quota, the breaker, the metrics label,
+	// and filtering by channel in the operator UI.
+	Channel string
+	// Recipients is the addressing the caller supplied, empty when the
+	// channel's own configuration decided it.
+	Recipients  []string
 	ChannelType string
 	Status      Status
 	Attempts    int
@@ -201,10 +215,17 @@ type Channels interface {
 // operator with the database open — which is the point, and also the reason
 // the create response says so.
 type APIKey struct {
-	ID     string
-	Name   string
+	ID      string
+	Name    string
 	KeyHash string
 	Enabled bool
+	// AllowedRecipients lists the address patterns this key may name as a
+	// recipient — "*", "@example.com" or a full address; see internal/recipients.
+	//
+	// Empty means none. A key that may only use the destinations an operator
+	// configured is the default, because the alternative default hands every
+	// existing key the right to send mail to anyone the moment this ships.
+	AllowedRecipients []string
 	// CreatedAt and LastUsedAt are set by the store.
 	CreatedAt time.Time
 	// LastUsedAt is nil until the key is first used.

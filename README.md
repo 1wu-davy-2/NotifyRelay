@@ -114,6 +114,25 @@ curl -X POST http://127.0.0.1:8080/api/v1/notify \
 `$TOKEN` 是创建时显示的那一串，以 `nr_` 开头。**只存摘要，那一次之后就再也拿不回来了**——
 丢了就删掉重建。
 
+上面这条发往渠道自己配置好的目的地，告警要的就是这个。**注册邮件、密码重置**这类事务邮件的
+收件人只存在于请求里，加一个 `to` 字段（或者写成等价的 `mailto://` 目标）：
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/v1/notify \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "targets": ["email:tx"],
+        "to":      ["user@example.com"],
+        "title":   "重置密码",
+        "body":    "https://example.com/reset/abc"
+      }'
+```
+
+两点要先知道：这个 `to` 会**替换**渠道配置里的收件人而不是追加；而且它要过该 API Key 的
+**收件人白名单**——空白名单表示一个都不许（发告警的 Key 不用配），要发事务邮件就得在密钥页
+显式授权 `@你的域名` 或 `*`。这两条都是为了不把这个服务变成"拿着 Key 就能给任何人发信"的东西。
+
 **默认异步**：入队即返回 `202` 与投递 ID。
 
 ```json
@@ -168,7 +187,8 @@ ops.team.warning@relay.local   -> 通道 "ops.team"，级别 warning
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| `targets` | ✅ | 通道别名数组，或 `类型:别名`。可混用 |
+| `targets` | ✅ | 通道别名数组、`类型:别名`，或通道 URL `mailto://user@example.com?via=tx`。可混用 |
+| `to` | | 收件人数组，给支持按请求寻址的通道（目前是 email）。与 `mailto://` 目标等价，二选一 |
 | `title` | ✅ | 标题 |
 | `body` | ✅ | 正文 |
 | `format` | | `text` \| `markdown` \| `html`，默认 `text`。**由调用方声明，服务端不猜** |

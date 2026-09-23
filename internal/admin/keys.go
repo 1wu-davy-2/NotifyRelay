@@ -11,7 +11,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"notifyrelay/internal/admin/i18n"
 	"notifyrelay/internal/auth"
+	"notifyrelay/internal/recipients"
 	"notifyrelay/internal/requestid"
 	"notifyrelay/internal/store"
 )
@@ -49,11 +51,42 @@ type keyView struct {
 	// tell which entries they can delete here and which are pinned by the
 	// configuration file.
 	Source string `json:"source"`
+	// AllowedRecipients is the address patterns this key may name as a
+	// recipient of a notification. Empty is the default and means none: the
+	// key can only reach the destinations a channel was configured with.
+	AllowedRecipients []string `json:"allowed_recipients,omitempty"`
 }
 
 type saveKeyRequest struct {
-	Name    string `json:"name"`
-	Enabled *bool  `json:"enabled"`
+	Name string `json:"name"`
+	// Enabled and AllowedRecipients are pointers so that "absent" is
+	// distinguishable from "empty".
+	//
+	// For a boolean the two mean the same thing, but for the list they do not:
+	// absent means "leave it alone" and empty means "this key may address
+	// nobody". Without the distinction, toggling a key off and on again would
+	// silently revoke its recipients — the sort of change nobody notices until
+	// a password reset stops arriving.
+	Enabled           *bool     `json:"enabled"`
+	AllowedRecipients *[]string `json:"allowed_recipients"`
+}
+
+// allowedRecipients returns the requested patterns and whether any were
+// requested, refusing a malformed one before it is stored.
+//
+// Refused here rather than at the first notification because this is the moment
+// somebody can still see what they typed. A pattern that matches nothing is the
+// worst outcome: the key looks configured and quietly fails.
+func (req saveKeyRequest) allowedRecipients(t *i18n.Messages) ([]string, bool, string) {
+	if req.AllowedRecipients == nil {
+		return nil, false, ""
+	}
+	for _, pattern := range *req.AllowedRecipients {
+		if err := recipients.Validate(pattern); err != nil {
+			return nil, false, fmt.Sprintf(t.ErrKeyRecipientPattern, pattern)
+		}
+	}
+	return *req.AllowedRecipients, true, ""
 }
 
 // keysPage implements GET /admin/keys.
@@ -121,17 +154,24 @@ func (h *handler) createKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	allowed, _, refusal := req.allowedRecipients(t)
+	if refusal != "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", refusal)
+		return
+	}
+
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
 
 	key := &store.APIKey{
-		ID:        requestid.New(),
-		Name:      name,
-		KeyHash:   auth.HashAPIKey(token),
-		Enabled:   enabled,
-		CreatedAt: time.Now().UTC(),
+		ID:                requestid.New(),
+		Name:              name,
+		KeyHash:           auth.HashAPIKey(token),
+		Enabled:           enabled,
+		AllowedRecipients: allowed,
+		CreatedAt:         time.Now().UTC(),
 	}
 	if err := h.deps.Keys.PutAPIKey(r.Context(), key); err != nil {
 		h.log.Error("admin: could not store an API key", slog.String("error", err.Error()))
@@ -153,10 +193,15 @@ func (h *handler) createKey(w http.ResponseWriter, r *http.Request) {
 
 // updateKey implements POST /admin/api/keys/{id}.
 //
-// Enable and disable only. The token itself cannot be changed: rotating means
-// creating a new key and deleting the old one, which is the operation that
-// leaves an overlap during which both work — and doing it any other way would
-// mean a rotation with an outage in the middle.
+// Enable, disable, and the address allow list. The token itself cannot be
+// changed: rotating means creating a new key and deleting the old one, which is
+// the operation that leaves an overlap during which both work — and doing it
+// any other way would mean a rotation with an outage in the middle.
+//
+// Both fields are optional and an absent one is left alone. That is not
+// leniency for its own sake: the toggle and the allow list are edited in
+// different places, and requiring both on every call would make flipping a key
+// off and on again silently rewrite a list the caller never saw.
 func (h *handler) updateKey(w http.ResponseWriter, r *http.Request) {
 	t := copyFor(r)
 
@@ -172,10 +217,6 @@ func (h *handler) updateKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", t.ErrInvalidJSON)
 		return
 	}
-	if req.Enabled == nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", t.ErrKeyEnabledRequired)
-		return
-	}
 
 	key, err := h.deps.Keys.GetAPIKey(r.Context(), id)
 	if err != nil {
@@ -188,7 +229,18 @@ func (h *handler) updateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	key.Enabled = *req.Enabled
+	allowed, given, refusal := req.allowedRecipients(t)
+	if refusal != "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", refusal)
+		return
+	}
+
+	if req.Enabled != nil {
+		key.Enabled = *req.Enabled
+	}
+	if given {
+		key.AllowedRecipients = allowed
+	}
 	if err := h.deps.Keys.PutAPIKey(r.Context(), key); err != nil {
 		h.log.Error("admin: updating an API key failed", slog.String("error", err.Error()))
 		writeError(w, http.StatusInternalServerError, "internal", t.ErrKeyUpdateFailed)
@@ -251,14 +303,15 @@ func (h *handler) deleteKey(w http.ResponseWriter, r *http.Request) {
 func (h *handler) keyViews(r *http.Request) ([]keyView, error) {
 	views := make([]keyView, 0, 8)
 
-	for _, name := range h.configuredKeyNames() {
+	for _, k := range h.deps.Auth.APIKeys {
 		views = append(views, keyView{
-			ID:     "config:" + name,
-			Name:   name,
+			ID:     "config:" + k.Name,
+			Name:   k.Name,
 			Source: "configuration",
 			// A key in the file is enabled by the file. The UI cannot change it
 			// and does not pretend to.
-			Enabled: true,
+			Enabled:           true,
+			AllowedRecipients: k.AllowedRecipients,
 		})
 	}
 
@@ -272,11 +325,12 @@ func (h *handler) keyViews(r *http.Request) ([]keyView, error) {
 	}
 	for _, k := range stored {
 		v := keyView{
-			ID:        k.ID,
-			Name:      k.Name,
-			Enabled:   k.Enabled,
-			CreatedAt: k.CreatedAt.Format(time.RFC3339),
-			Source:    "database",
+			ID:                k.ID,
+			Name:              k.Name,
+			Enabled:           k.Enabled,
+			CreatedAt:         k.CreatedAt.Format(time.RFC3339),
+			Source:            "database",
+			AllowedRecipients: k.AllowedRecipients,
 		}
 		if k.LastUsedAt != nil {
 			v.LastUsedAt = k.LastUsedAt.Format(time.RFC3339)

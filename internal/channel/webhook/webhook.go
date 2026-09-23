@@ -94,7 +94,7 @@ func (c *Channel) Capability() channel.Capability {
 func (c *Channel) ParamSchema() []channel.ParamSpec { return paramSchema() }
 
 // Send implements channel.Channel.
-func (c *Channel) Send(ctx context.Context, msg *message.Message) channel.Result {
+func (c *Channel) Send(ctx context.Context, msg *message.Message, _ channel.Target) channel.Result {
 	body, contentType, err := c.payload(msg)
 	if err != nil {
 		return channel.Permanent(err, "the payload could not be rendered")

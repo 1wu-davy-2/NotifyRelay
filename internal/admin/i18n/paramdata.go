@@ -33,7 +33,7 @@ var zhParams = map[string]ParamCopy{
 	"email.password":    {Label: "密码", Desc: "写成 `!env SMTP_PASSWORD`；不要直接写在配置里。"},
 	"email.auth_type":   {Label: "认证方式", Desc: "auto 表示由服务器通告其支持的机制。"},
 	"email.from":        {Label: "发件人", Desc: "信封与头部的发件人。"},
-	"email.to":          {Label: "收件人", Desc: "一个或多个地址。每个收件人独立投递。"},
+	"email.to":          {Label: "收件人", Desc: "一个或多个地址，每个收件人独立投递。留空表示本渠道的收件人由请求指定（通知 API 的 to 字段，或 mailto:// 目标）。"},
 	"email.helo":        {Label: "EHLO 名称", Desc: "留空则由客户端自行推导。"},
 	"email.timeout":     {Label: "投递超时", Desc: "限制单个收件人的 SMTP 会话时长。"},
 	"email.ca_file":     {Label: "CA 证书包", Desc: "额外受信根的 PEM 文件，用于使用私有 CA 的中继。"},

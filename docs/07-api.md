@@ -135,6 +135,8 @@ cookie 会随进程重启一起失效，而不是一直有效到过期。
 | `too_many_attempts` | 429 | 登录失败退避中，带 `Retry-After` |
 | `invalid_request` | 400 | 请求体或查询参数不合法 |
 | `unknown_target` | 400 | `targets` 里有解析不出来的别名（仅异步路径） |
+| `recipients_not_supported` | 400 | 给一个不支持按请求寻址的通道传了收件人（仅异步路径；同步路径是逐目标的 `permanent`） |
+| `recipient_not_allowed` | 403 | 收件人不在该 API key 的 `allowed_recipients` 里 |
 | `invalid_config` | 400 | 渠道参数没过 schema 校验（消息里会点名是哪个参数） |
 | `save_failed` | 400 | 渠道写库失败 |
 | `queue_unavailable` | 503 | 入队失败 |
@@ -166,7 +168,8 @@ cookie 会随进程重启一起失效，而不是一直有效到过期。
 
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `targets` | `[]string` | ✅ | | 至少一个。别名 `oncall`，或 `类型:别名` `email:oncall`。可混用 |
+| `targets` | `[]string` | ✅ | | 至少一个。别名 `oncall`、`类型:别名` `email:oncall`，或通道 URL `mailto://user@example.com?via=oncall`。可混用 |
+| `to` | `[]string` | | | 本请求的收件人，只对**声明了寻址能力**的通道有意义。见 §3.1.5 |
 | `title` | `string` | ✅ | | 去空白后不能为空 |
 | `body` | `string` | ✅ | | 去空白后不能为空 |
 | `format` | `string` | | `text` | `text` \| `markdown` \| `html`，大小写不敏感。**由调用方声明，服务端不猜** |
@@ -189,10 +192,16 @@ cookie 会随进程重启一起失效，而不是一直有效到过期。
   "request_id": "96b3604fede17b44",
   "accepted": true,
   "deliveries": [
-    { "id": "282d67a1b3c4e5f6", "target": "oncall", "channel_type": "email", "status": "queued" }
+    { "id": "282d67a1b3c4e5f6", "target": "oncall", "channel": "oncall",
+      "channel_type": "email", "status": "queued" }
   ]
 }
 ```
+
+| 字段 | 说明 |
+|---|---|
+| `target` | **原样回显**调用方写的那串 |
+| `channel` | 解析出的实例别名。202 时就已经定下并落库，**不会**因为之后改了配置而变 |
 
 `deliveries[].status` 这里是**投递状态**（`queued`），不是结果分类。空数组是 `[]`，不是 `null`。
 
@@ -235,8 +244,43 @@ cookie 会随进程重启一起失效，而不是一直有效到过期。
 
 **同步路径的解析失败不报 400**：目标解析不出来会作为一条
 `status: "permanent"` 的结果返回，HTTP 仍是 200。异步路径才会在入队前拒掉整个请求（400
-`unknown_target`）。这个不对称是有意的——同步调用方要的是「每个目标成没成」，
-而不是「有一个目标名字错了所以整批都没发」。
+`unknown_target` / `recipients_not_supported`）。这个不对称是有意的——同步调用方要的是
+「每个目标成没成」，而不是「有一个目标名字错了所以整批都没发」；一个请求同时发给邮件通道和
+IM 通道时，前者仍然发得出去。
+
+「这是请求本身不合法」（收件人不在白名单里、`to` 与 URL 目标同时给了收件人）则**两条路径
+一样**直接拒绝：那不是某个目标的事实，而是这次请求本身不被允许。
+
+#### 3.1.5 收件人由请求指定
+
+告警类通道的收件人写在**通道配置**里（`email:oncall` 就是那个值班邮箱）。
+注册邮件、密码重置这类**事务邮件**的收件人只存在于请求里，两种写法等价：
+
+```json
+{"targets": ["email:tx"], "to": ["user@example.com"], "title": "重置密码", "body": "..."}
+{"targets": ["mailto://user@example.com?via=tx"],                           "title": "重置密码", "body": "..."}
+```
+
+`mailto://` 的地址写在路径里，`?via=<实例名>` 指定借用哪个邮件实例的服务器与凭据。
+`via` 省略时用**该类型唯一的已启用实例**；一个都没有或有多个，请求被拒绝并列出候选。
+
+几条必须知道的规则：
+
+- **请求给的收件人替换配置里的，不是追加。** 否则一个固定收件人（合规抄送、公共邮箱）会
+  收到每封发给别人的密码重置邮件。
+- **`to` 作用于请求里的每个目标。** 任一目标所在通道不支持按请求寻址（如 IM 通道），
+  该目标被拒；同步路径只影响它自己，异步路径拒绝整个请求。
+- **`to` 与 `mailto://` 目标不能同时出现**（400 `invalid_request`）——那是同一个问题的
+  两个答案，合并会发到调用方没写过的地址，二选一会静默忽略另一个。
+- **单个目标的收件人数量有上限**（email 为 50）。通道对每个收件人各开一次 SMTP 会话，而
+  配额按「每次投递」计，不设上限的话一次请求就能用一个配额单位买 50 次连接。
+- **收件人要过 API key 的 `allowed_recipients` 白名单**，两种写法都过。空白的名单意味着
+  **一个都不许**：只发告警的 key 不需要配，要发事务邮件就得显式授权。
+  规则只有三种：`*`、`@example.com`（该域名，不含子域，也不会匹配 `notexample.com`）、
+  完整的 `user@example.com`。
+
+> 响应里的 `results[].recipients` / `deliveries[].recipients` 是**每个收件人的投递结果**，
+> 与请求里的 `to` 字段是两回事：前者是「发给谁成没成」，后者是「这次要发给谁」。
 
 #### 3.1.3 幂等
 

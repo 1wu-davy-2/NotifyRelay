@@ -32,25 +32,35 @@ type channelView struct {
 	// reload looks like from the outside.
 	Live      bool      `json:"live"`
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
+	// NeedsRecipients says this instance has no destination of its own, so a
+	// test notification — which names no recipient — has nowhere to go.
+	//
+	// The list reads it to disable that row's button and say why. The endpoint
+	// refuses anyway; this is so the operator does not have to click to find
+	// out.
+	NeedsRecipients bool `json:"needs_recipients,omitempty"`
 }
 
 func (h *handler) view(cfg config.ChannelConfig) channelView {
 	masked, set := config.MaskSecrets(cfg.Type, cfg.Config)
 
-	live := false
-	if h.deps.Router != nil {
-		live = h.deps.Router.TypeOf(cfg.Name) != ""
-	}
-
-	return channelView{
+	view := channelView{
 		Name:       cfg.Name,
 		Type:       cfg.Type,
 		Enabled:    cfg.IsEnabled(),
 		Config:     masked,
 		Quota:      cfg.Quota,
 		SecretsSet: set,
-		Live:       live,
 	}
+	if h.deps.Router == nil {
+		return view
+	}
+
+	view.Live = h.deps.Router.TypeOf(cfg.Name) != ""
+	if capability, ok := h.deps.Router.CapabilityOf(cfg.Name); ok {
+		view.NeedsRecipients = capability.NeedsRecipients
+	}
+	return view
 }
 
 type channelsResponse struct {

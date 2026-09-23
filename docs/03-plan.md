@@ -995,6 +995,130 @@ nonroot 运行——**容器会在启动时因权限失败**。distroless 没有
 
 ---
 
+## M6 · 收件人由请求指定（事务邮件）
+
+**起点是一个提问**：「email 渠道为什么收件人必填？注册邮件、密码重置邮件这种，收件人不该是
+请求里的数据吗？」
+
+答案有两层。第一层：对运维告警，别名即目的地（`email:oncall` 就是那个值班邮箱），配置里写死
+收件人是对的；对事务邮件，收件人只存在于请求里，配置表达不了。第二层：**这个形式 `02-scope.md`
+§1.2 一开始就写了**——`"targets": ["mailto://ops@example.com", "email:oncall"]`——但从未实现。
+`router.go` 里那句 "arrives in M2 together with the registry-driven URL parser" 一直挂到 M5
+结束，而 M2 的任务清单里根本没有这一项：**计划里提了，拆任务时掉了**。
+
+### 任务清单
+
+- [ ] `channel.Target{Ref, Instance, Recipients}`；`Descriptor.TargetScheme` / `ParseTarget`；
+      registry 加 scheme 索引（重复 scheme 在注册期 panic）
+- [ ] `Channel.Send` 带 target（收件人是信封，不是正文）
+- [ ] `Capability.MaxRecipients` / `NeedsRecipients`
+- [ ] `router.ResolveTarget`：别名 / `类型:别名` / URL 三形式；收件人策略与上限
+- [ ] email：`to` 改可选；`mailto:` 解析；收件人二选一
+- [ ] `deliveries` 加 `channel` 与 `recipients` 两列（含把 `channel` 从 `target` 回填）
+- [ ] Prometheus 标签改用解析后的实例，不用 target
+- [ ] `api_keys.allowed_recipients` + `internal/recipients` 匹配 + 认证身份进 context
+- [ ] API `to` 字段、三个新错误码
+- [ ] 文档与示例配置
+
+### 实施记录（2026-09-23）
+
+**状态：完成。** M6.1 = 核心链路 + 白名单 + 后端接口 + 文档；M6.2 = 后台表单与多语言文案。
+
+#### 对计划的偏离
+
+| # | 计划 | 实际 | 原因 |
+|---|---|---|---|
+| 1 | 收件人放 `message.Message`（借 `At` 的先例） | 放 `channel.Target`，`Send` 加参数 | `Message` 的注释写明「字段要能被至少两个通道渲染」，只有 email 读收件人。更关键的是 `DeliverAll` 并发共享同一个 `*Message`，按目标写 `msg.Recipients` 是数据竞争；SMTP 入口本来就把信封（`rcpts`）和正文（`DATA`）分开，照搬同一个模型 |
+| 2 | URL → 按 scheme 造**临时实例**（`02-scope.md` §4.3 原设计） | URL → **借用**已配置实例 | 临时实例需要凭据，凭据只能来自配置：要么进 URL（进日志与审计），要么等于把实例配置重拼一遍。借用还让配额/熔断/审计/凭据擦除全部落在同一个实例上，零改动 |
+| 3 | `deliveries` 只加 `recipients` 一列 | 再加 `channel` 一列 | 评审发现：`worker.go` 四处 Prometheus 计数器拿 `d.Target` 当标签值，而 `/metrics` **不鉴权**。target 一旦带邮箱地址，标签基数爆炸且地址被任何人抓走。同一列顺带修好按通道筛选 |
+| 4 | 白名单只做 `*` / `@域名` / 完整地址三种模式 | 同左，但**空白名单 = 默认拒绝** | 反过来（空白 = 不限）会让每一个既有 key 在升级瞬间获得「给任何人发信」的权限 |
+| 5 | `deliveries.channel` 只加列 | 加列 + **回填** | 只加列会让既有行的 `channel` 为空，那些行的指标标签和「看 oncall 发过什么」全部失效。迁移机制原本只支持加列，因此给它加了一个可选的 `backfill` 字段 |
+
+#### 评审中发现并修掉的问题
+
+1. **配额/限流可被绕开。** `email.Send` 每个收件人开一次 SMTP 会话，而 router 每个 part 只扣
+   一个配额、一个令牌。收件人由运维配置时无害，改为调用方可指定后，一次请求就能用一个配额
+   单位买 50 次连接（1 MiB 请求体可塞约 3 万个地址）。修法：`Capability.MaxRecipients` 由核心
+   统一强制。**配额仍按每次 Send 计一个单位**（已确认）——按收件人计费更贴近真实成本，但会让
+   已配置 5 个收件人的告警通道突然消耗 5 倍配额，那是另一个改动。
+2. **`via` 省略时的「唯一实例」会在投递期变味。** 接受时只有一个 email 实例、worker 取件前
+   又加了一个 → 投递期解析变歧义 → 永久失败，而调用方早已拿到 202。修法：接受时解析出的实例
+   名落进 `deliveries.channel`，投递期只校验存在性与类型，**不再重新推断**。
+3. **`mailto://ops@example.com` 的解析陷阱**（本机 Go 1.25 源码 `net/url/url.go:543,591` 已核实）：
+   `//` 之后走 authority 分支，`ops` 落进 `u.User`、`example.com` 落进 `u.Host`。只读 `u.Opaque`
+   的解析器（照 RFC 6068 写的）在每个 RFC 用例上都通过，在每一个真人写出来的请求上都返回空。
+   实现改为手工剥前缀 + `net/mail.ParseAddressList`，两种拼法都有测试钉住。
+   顺带发现 `mailto://undisclosed-recipients:;`（空地址组）能被 `net/mail` 无错解析成**零个**
+   收件人——不拦的话就是一个「谁都不发」的目标被当成「没有指定收件人」而回落到配置的收件人，
+   把密码重置邮件发给值班邮箱。
+4. **核心认不认识 scheme，测试原先管不着。** `TestCorePackagesNameNoChannel` 扫的是
+   `"email"` 这类**通道名**字面量，`"mailto"` 不在表里——于是 router 里写一句
+   `case "mailto":` 能通过全部现有断言。已把 scheme 加进禁用表，并把 scheme→通道的索引放进
+   `channel` 注册表（`LookupScheme`），router 只查表不比较。
+
+#### 一处既有的不一致，本次顺带修正
+
+同步路径的 `results[].target` 一直回显调用方原文，异步路径的 `deliveries[].target` 回显的是
+**解析后的别名**——同一个请求在两条路径上返回不同的字符串。M6 起异步也回显原文，另加
+`deliveries[].channel` 给解析结果。两个字段回答两个问题：调用方写了什么，以及谁在干活。
+
+#### 已知取舍
+
+- **实例没有默认 `to`、请求也没给收件人**时，错误在**投递期**才报（异步是 202 之后）。
+  接受期要拦住它，router 就得能问「这个实例有没有默认目的地」，为这一个检查加接口不划算。
+  运维面上的对应处理是「发送测试通知」按钮直接置灰并说明原因（`Capability.NeedsRecipients`），
+  不让运维点一下看一个不是他造成的永久失败。
+- **7 种语言的调用样本没有逐份加 `to`/`mailto://` 示例**，改成了在 API 参考页的样本正下方
+  加一节「收件人由请求指定」。样本讲的是「怎么从语言 X 调用」，加进去就要动 14 个文件，
+  而读者真正在找答案的位置是那一节。若日后要补进样本，`samples_test.go` 要求中英两份
+  剥掉注释后逐字节相同。
+
+#### M6.2 · 后台表单与多语言文案
+
+- **密钥页**：新建表单加「可发往的收件人」输入框（逗号分隔），列表加同名列（空白名单显示
+  「仅渠道目的地」而不是留空——空单元格读起来像没填，而这是一个决定），每行加「改收件人」
+  按钮开对话框编辑。
+- **`updateKey` 的 `enabled` 改为可选**。两个字段分处两处编辑，若每次调用都必须带上
+  `enabled`，运维开关一次密钥就会顺手覆写他没见过的白名单。删掉了对应的
+  `ErrKeyEnabledRequired`。空框提交的是**空数组**（= 一个都不许），不是"不修改"。
+- **渠道页**：`NeedsRecipients` 的实例，测试通知按钮置灰并给出原因（`title` 提示），
+  服务端本来就拒绝，这只是让运维不用点一下才知道。
+- **API 参考页**：新增一节，含两种写法的 JSON 示例与三条规则。示例正文进文案表
+  （`APIDocsRecipientsExample*`）——`render_lang_test.go` 的
+  `TestTemplates_KeepNoEnglishProse` 不允许模板里留英文散文，这条规则把示例里的
+  "Reset your password" 也算作散文，拦下来是对的。
+- **`docs/i18n-inventory.md` 加了「这是快照不是索引」的说明**。它是 i18n 落地那一刻的清点，
+  之后新增的文案不在里面；唯一的真相是 `i18n/messages.go` 的结构体。
+
+#### 验收结果（M6.2）
+
+| # | 验收标准 | 结果 |
+|---|---|---|
+| 1 | 密钥页能创建带白名单的密钥 | ✅ 实测创建 `@example.com, ops@partner.test`，列表显示两行值 |
+| 2 | 能改已有密钥的白名单 | ✅ 对话框预填当前值，改成 `@example.com` 后列表更新，flash 提示 |
+| 3 | 开关密钥不清空白名单 | ✅ 单测钉住（`TestUpdateKey_AbsentRecipientsAreLeftAlone`） |
+| 4 | 非法模式在保存时被拒并点名 | ✅ 单测 + 实测 |
+| 5 | 无收件人的渠道测试按钮置灰 | ✅ 实测截图：`tx` 置灰、`oncall` 可点；另有页面断言测试 |
+| 6 | 中英两栏都完整 | ✅ `i18n_test.go` 的「无空串」「占位符一致」两条全过 |
+| 7 | 浏览器实测 | ✅ 登录 → 密钥页 → 创建/编辑 → 渠道页 → API 参考（中英各一遍） |
+
+#### 验收结果
+
+| # | 验收标准 | 结果 |
+|---|---|---|
+| 1 | 两种写法等价 | ✅ `{"targets":["email:tx"],"to":[...]}` 与 `{"targets":["mailto://...?via=tx"]}` 在 API 测试里断言到达通道的 `Target` 完全一致 |
+| 2 | 请求收件人替换而非追加配置收件人 | ✅ 假 SMTP 服务器断言只收到请求里的地址 |
+| 3 | 空白名单默认拒绝，两种写法都拦 | ✅ `TestNotify_AllowList` 六种情形 |
+| 4 | `@example.com` 不匹配 `user@notexample.com` | ✅ 单测 + API 层各一条 |
+| 5 | 不支持的通道给收件人被拒 | ✅ 同步逐目标 permanent，异步 400 `recipients_not_supported` |
+| 6 | 上限生效 | ✅ `RecipientPolicyError` 在受理期即拒 |
+| 7 | 投递期实例名不再重新推断 | ✅ 加第二个实例后仍投给原本那个 |
+| 8 | 老库能开、列能回填 | ✅ 手工建旧表后 `Open`，断言 `channel` 已从 `target` 回填 |
+| 9 | 核心不认识任何 scheme | ✅ 禁用字面量表已含 `"mailto"` |
+| 10 | `go test ./...` 全绿 | ✅ |
+
+---
+
 ## 里程碑依赖关系
 
 ```

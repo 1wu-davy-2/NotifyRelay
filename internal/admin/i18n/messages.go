@@ -173,15 +173,17 @@ type Messages struct {
 
 	// Sending a real notification through a channel, which is the only thing on
 	// this page that proves a notification arrives.
-	TestNotifyButton    string
-	TestNotifyHeading   string
-	TestNotifyIntro     string
-	TestNotifyTitle     string
-	TestNotifyTitleHint string
-	TestNotifyBody      string
-	TestNotifyBodyHint  string
-	TestNotifySubmit    string
-	TestNotifyCancel    string
+	TestNotifyButton  string
+	TestNotifyHeading string
+	TestNotifyIntro   string
+	// TestNotifyNeedsRecipient is the tooltip on a disabled test button.
+	TestNotifyNeedsRecipient string
+	TestNotifyTitle          string
+	TestNotifyTitleHint      string
+	TestNotifyBody           string
+	TestNotifyBodyHint       string
+	TestNotifySubmit         string
+	TestNotifyCancel         string
 
 	// ---------------------------------------------------------- deliveries
 
@@ -263,12 +265,22 @@ type Messages struct {
 	KeysTableStatus      string
 	KeysTableCreated     string
 	KeysTableLastUsed    string
-	KeysEmptyTitle       string
-	KeysEmptyBody        template.HTML // names the status code, so it carries <code>
-	KeysDialogHeading    string
-	KeysDialogBody       string
-	KeysDialogCopy       string
-	KeysDialogDone       string
+	KeysTableRecipients  string
+	// KeysRecipientsLabel, KeysRecipientsHint and KeysRecipientsDesc describe
+	// the address allow list: the one field on this page that decides what a
+	// key can reach beyond the channels an operator already configured.
+	KeysRecipientsLabel   string
+	KeysRecipientsHint    string // the input's placeholder example
+	KeysRecipientsDesc    string
+	KeysRecipientsNone    string // the table cell for a key that may address nobody
+	KeysRecipientsEdit    string // the row button
+	KeysRecipientsHeading string // the edit dialog's heading, then the key's name
+	KeysEmptyTitle        string
+	KeysEmptyBody         template.HTML // names the status code, so it carries <code>
+	KeysDialogHeading     string
+	KeysDialogBody        string
+	KeysDialogCopy        string
+	KeysDialogDone        string
 
 	// ------------------------------------------------------------ API docs
 
@@ -290,21 +302,34 @@ type Messages struct {
 	APIDocsExamplesHeading string
 	APIDocsExamplesIntro   template.HTML
 	APIDocsCopy            string
-	APIDocsEndpointsHead   string
-	APIDocsTableMethod     string
-	APIDocsTablePath       string
-	APIDocsTableAuth       string
-	APIDocsTablePurpose    string
-	APIDocsAuthNone        string
-	APIDocsErrorsHeading   string
-	APIDocsErrorBodyNote   template.HTML
-	APIDocsTableStatus     string
-	APIDocsTableMeaning    string
-	APIDocsGotchasHeading  string
-	APIDocsGotchaClassCase template.HTML
-	APIDocsGotchaNotAtt    template.HTML
-	APIDocsSampleNoteCurl  string
-	APIDocsSampleNoteGo    string
+	// The recipients section: the one part of a request the samples do not
+	// show, because they all send to a channel's own destination. The four
+	// body strings carry <code> and <strong>, like the API copy above them.
+	APIDocsRecipientsHeading   string
+	APIDocsRecipientsIntro     template.HTML
+	APIDocsRecipientsSame      template.HTML
+	APIDocsRecipientsReplace   template.HTML
+	APIDocsRecipientsAllowlist template.HTML
+	APIDocsRecipientsExclusive template.HTML
+	// The two example bodies. Escaped on the way out and read inside a <pre>,
+	// so they are plain strings rather than markup.
+	APIDocsRecipientsExampleTo  string
+	APIDocsRecipientsExampleURL string
+	APIDocsEndpointsHead        string
+	APIDocsTableMethod          string
+	APIDocsTablePath            string
+	APIDocsTableAuth            string
+	APIDocsTablePurpose         string
+	APIDocsAuthNone             string
+	APIDocsErrorsHeading        string
+	APIDocsErrorBodyNote        template.HTML
+	APIDocsTableStatus          string
+	APIDocsTableMeaning         string
+	APIDocsGotchasHeading       string
+	APIDocsGotchaClassCase      template.HTML
+	APIDocsGotchaNotAtt         template.HTML
+	APIDocsSampleNoteCurl       string
+	APIDocsSampleNoteGo         string
 
 	// ------------------------------------------------------- relative time
 
@@ -331,6 +356,8 @@ type Messages struct {
 	ErrBreakerDisabled       string
 	ErrChannelBuildFailed    string
 	ErrChannelDisabled       string
+	ErrChannelNeedsRecipient string
+	ErrKeyRecipientPattern   string // %s: the refused pattern
 	ErrNoQueue               string
 	ErrEnqueueFailed         string
 	ErrTestMessageIncomplete string
@@ -344,7 +371,6 @@ type Messages struct {
 	ErrNoKeyStore            string
 	ErrKeyNameRequired       string
 	ErrKeyCreateFailed       string
-	ErrKeyEnabledRequired    string
 	ErrKeyUnreadable         string
 	ErrKeyNotFound           string
 	ErrKeyUpdateFailed       string
@@ -419,6 +445,9 @@ type Script struct {
 	// used to reload the page with nothing said about it.
 	KeyStateEnabled  string // %s: the key's name
 	KeyStateDisabled string // %s: the key's name
+	// KeyRecipientsSaved is the flash after a key's address allow list is
+	// saved. %s: the key's name.
+	KeyRecipientsSaved string
 
 	// DiscardChanges guards a form that has been edited and not saved.
 	DiscardChanges string

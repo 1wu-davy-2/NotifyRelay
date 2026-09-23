@@ -188,6 +188,8 @@ var apiErrors = []apiDocError{
 	{"unauthorized", "401", "Bearer 缺失或无效", "Missing or invalid bearer token"},
 	{"invalid_request", "400", "请求体或查询参数不合法", "Malformed body or query parameter"},
 	{"unknown_target", "400", "目标别名解析不出来（仅异步路径）", "A target does not resolve (async path only)"},
+	{"recipients_not_supported", "400", "给不支持按请求寻址的通道传了收件人", "The target's channel takes no recipients from the request"},
+	{"recipient_not_allowed", "403", "收件人不在该 API key 的 allowed_recipients 里", "The key may not address that recipient"},
 	{"not_found", "404", "没有这个投递 ID", "No delivery with that id"},
 	{"queue_unavailable", "503", "入队失败", "The delivery could not be queued"},
 	{"not_ready", "503", "存储不可达", "The delivery store is not reachable"},

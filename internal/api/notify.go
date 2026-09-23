@@ -3,12 +3,16 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
 
+	"notifyrelay/internal/channel"
 	"notifyrelay/internal/message"
 	"notifyrelay/internal/queue"
+	"notifyrelay/internal/recipients"
 	"notifyrelay/internal/requestid"
 	"notifyrelay/internal/router"
 	"notifyrelay/internal/store"
@@ -23,10 +27,23 @@ const idempotencyHeader = "Idempotency-Key"
 
 // notifyRequest is the wire format of POST /api/v1/notify.
 //
-// The caller describes WHAT happened. It never describes how to deliver it —
-// that lives in the channel configuration.
+// The caller describes WHAT happened, and — for a channel that delivers to an
+// address the caller knows and the operator does not — WHO it is for. It never
+// describes how to reach the peer: the SMTP host, the token, the webhook URL
+// all live in the channel configuration.
+//
+// `to` is the second half of that. A registration mail has a recipient that
+// exists only in the request, so a channel's fixed recipient list cannot
+// express it; without this field the whole category of transactional mail is
+// unsendable, and with it the relay would mail anyone unless the key's own
+// allow list says otherwise (internal/recipients).
 type notifyRequest struct {
-	Targets  []string       `json:"targets"`
+	Targets []string `json:"targets"`
+	// To names recipients for this request, for channels that address them.
+	//
+	// It applies to every target, which is why mixing it with a target that
+	// does not take recipients is refused rather than quietly ignored.
+	To       []string       `json:"to"`
 	Title    string         `json:"title"`
 	Body     string         `json:"body"`
 	Format   string         `json:"format"`   // text | markdown | html
@@ -67,8 +84,15 @@ type acceptedResponse struct {
 }
 
 type deliveryPayload struct {
-	ID          string `json:"id"`
-	Target      string `json:"target"`
+	ID string `json:"id"`
+	// Target is the reference the caller wrote, echoed back so that the reply
+	// lines up with the request.
+	Target string `json:"target"`
+	// Channel is the instance it resolved to. Both are here because they answer
+	// different questions: which string the caller sent, and which channel is
+	// actually doing the work — the second is what an operator looks up in the
+	// delivery list.
+	Channel     string `json:"channel"`
 	ChannelType string `json:"channel_type"`
 	Status      string `json:"status"`
 }
@@ -171,6 +195,19 @@ func (h *notifyHandler) handle(ctx context.Context, w http.ResponseWriter, r *ht
 
 	requestID := requestid.New()
 
+	targets, targetErrs := h.deliveryTargets(ctx, &req)
+
+	// A request-level refusal — a recipient this key may not address, or a
+	// target that already names its own — is answered the same way on both
+	// paths. It is not a fact about the target, and the synchronous path's
+	// habit of reporting trouble per target would disguise an authorisation
+	// failure as a delivery failure.
+	for _, err := range targetErrs {
+		if status, code, msg, ok := requestRefusal(err); ok {
+			return requestID, status, errorBody{Error: code, Message: msg}
+		}
+	}
+
 	h.log.Info("notify",
 		slog.String("request_id", requestID),
 		slog.Int("targets", len(req.Targets)),
@@ -179,28 +216,147 @@ func (h *notifyHandler) handle(ctx context.Context, w http.ResponseWriter, r *ht
 	)
 
 	if req.Sync || h.queue == nil {
-		results := h.router.DeliverAll(ctx, requestID, req.Targets, msg)
+		// Targets that resolved are delivered; the rest become results of their
+		// own. Reporting them per target rather than as a status code is the
+		// synchronous contract: one unresolvable target must not hide the
+		// outcome of the others.
+		results := make([]router.TargetResult, len(req.Targets))
+		deliverable := make([]channel.Target, 0, len(req.Targets))
+		at := make([]int, 0, len(req.Targets))
+		for i, err := range targetErrs {
+			if err != nil {
+				results[i] = router.PermanentFailure(req.Targets[i], err)
+				continue
+			}
+			deliverable = append(deliverable, targets[i])
+			at = append(at, i)
+		}
+
+		// DeliverAll preserves input order, so each result lands back in the
+		// slot its target came from.
+		for j, res := range h.router.DeliverAll(ctx, requestID, deliverable, msg) {
+			results[at[j]] = res
+		}
+
 		// Always 200 for a request that was understood. The per-target results
 		// carry the outcome; an HTTP status that summarised them would have to
 		// pick one target's fate to represent all of them.
 		return requestID, http.StatusOK, notifyResponse{RequestID: requestID, Results: results}
 	}
 
-	return h.accept(ctx, requestID, msg, req.Targets)
+	return h.accept(ctx, requestID, msg, targets, targetErrs)
+}
+
+// apiError is a refusal that is about the request rather than about the
+// deployment: the status and the error code the caller should be given.
+//
+// It travels as an error so that resolving targets stays a single pass, while
+// the decision of what to do about it stays with the handler.
+type apiError struct {
+	status int
+	code   string
+	msg    string
+}
+
+func (e *apiError) Error() string { return e.msg }
+
+// requestRefusal reports whether an error is about the *request* rather than
+// about the target, and what the caller should be told.
+//
+// These are the failures that both paths answer the same way, before the split
+// into synchronous results and a queued acknowledgement.
+func requestRefusal(err error) (status int, code, msg string, ok bool) {
+	var refused *apiError
+	if errors.As(err, &refused) {
+		return refused.status, refused.code, refused.msg, true
+	}
+
+	var conflict *router.RecipientConflictError
+	if errors.As(err, &conflict) {
+		return http.StatusBadRequest, "invalid_request", conflict.Error(), true
+	}
+
+	return 0, "", "", false
+}
+
+// deliveryTargets resolves every target and applies the caller's allow list.
+//
+// One entry per target, with the reason where one did not resolve, because the
+// two paths report failures differently: the asynchronous one refuses the whole
+// request, the synchronous one reports each target's fate separately and must
+// still deliver to the rest.
+func (h *notifyHandler) deliveryTargets(ctx context.Context, req *notifyRequest) ([]channel.Target, []error) {
+	targets := make([]channel.Target, len(req.Targets))
+	errs := make([]error, len(req.Targets))
+
+	for i, ref := range req.Targets {
+		t, _, err := h.router.ResolveTarget(ref, req.To)
+		if err != nil {
+			errs[i] = err
+			continue
+		}
+		targets[i] = t
+	}
+
+	// Applied to the recipients of every target, whoever named them: the `to`
+	// field and a mailto: URL are two spellings of the same thing, and checking
+	// only the first would leave the second as a way round the list.
+	//
+	// A missing identity fails closed on its own — the zero Identity allows
+	// nothing — which is what a route that forgot the middleware deserves.
+	id, _ := identityFrom(ctx)
+	for i := range targets {
+		if errs[i] != nil {
+			continue
+		}
+		for _, addr := range targets[i].Recipients {
+			if !recipients.Allows(id.AllowedRecipients, addr) {
+				errs[i] = &apiError{
+					status: http.StatusForbidden,
+					code:   "recipient_not_allowed",
+					msg: fmt.Sprintf("API key %q may not send to %q (see the key's allowed_recipients)",
+						id.Name, addr),
+				}
+				break
+			}
+		}
+	}
+
+	return targets, errs
+}
+
+// targetError maps a target that did not resolve to the error code the caller
+// acts on.
+//
+// The distinction is worth a type: "no channel is called that" sends the caller
+// to its configuration, while "this channel has no recipients" tells it that it
+// addressed the wrong kind of target.
+func targetError(err error) errorBody {
+	var policy *router.RecipientPolicyError
+	if errors.As(err, &policy) {
+		return errorBody{Error: "recipients_not_supported", Message: err.Error()}
+	}
+	return errorBody{Error: "unknown_target", Message: err.Error()}
 }
 
 // accept validates the targets and queues the deliveries.
-func (h *notifyHandler) accept(ctx context.Context, requestID string, msg *message.Message, targets []string) (string, int, any) {
+func (h *notifyHandler) accept(ctx context.Context, requestID string, msg *message.Message, targets []channel.Target, errs []error) (string, int, any) {
 	specs := make([]queue.TargetSpec, 0, len(targets))
-	for _, t := range targets {
-		alias, channelType, err := h.router.TargetType(t)
-		if err != nil {
+	for i, t := range targets {
+		if errs[i] != nil {
 			// Rejected now rather than queued and failed later: an
 			// acknowledgement the caller cannot act on is worse than a refusal.
-			return requestID, http.StatusBadRequest,
-				errorBody{Error: "unknown_target", Message: err.Error()}
+			return requestID, http.StatusBadRequest, targetError(errs[i])
 		}
-		specs = append(specs, queue.TargetSpec{Target: alias, ChannelType: channelType})
+		specs = append(specs, queue.TargetSpec{
+			Target: t.Ref,
+			// Pinned here, at the moment the configuration is known to be the
+			// one the caller was answered against. The worker must not resolve
+			// it again: "the only email channel" is a fact about now.
+			Channel:     t.Instance,
+			Recipients:  t.Recipients,
+			ChannelType: h.router.TypeOf(t.Instance),
+		})
 	}
 
 	deliveries, err := h.queue.Enqueue(ctx, requestID, msg, specs)
@@ -215,6 +371,7 @@ func (h *notifyHandler) accept(ctx context.Context, requestID string, msg *messa
 		out = append(out, deliveryPayload{
 			ID:          d.ID,
 			Target:      d.Target,
+			Channel:     d.Channel,
 			ChannelType: d.ChannelType,
 			Status:      string(d.Status),
 		})

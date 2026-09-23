@@ -21,7 +21,7 @@ import (
 
 // Deliverer is what the worker needs from the router.
 type Deliverer interface {
-	Deliver(ctx context.Context, requestID, target string, msg *message.Message) router.TargetResult
+	Deliver(ctx context.Context, requestID string, target channel.Target, msg *message.Message) router.TargetResult
 }
 
 // Options configures a Worker. The zero value is not usable; use New, which
@@ -193,6 +193,8 @@ func (w *Worker) Enqueue(ctx context.Context, requestID string, msg *message.Mes
 			ID:            id,
 			RequestID:     requestID,
 			Target:        t.Target,
+			Channel:       t.Channel,
+			Recipients:    t.Recipients,
 			ChannelType:   t.ChannelType,
 			Status:        store.StatusQueued,
 			NextAttemptAt: now,
@@ -211,16 +213,42 @@ func (w *Worker) Enqueue(ctx context.Context, requestID string, msg *message.Mes
 	}
 
 	for _, d := range items {
-		w.opts.Metrics.Enqueued.WithLabelValues(d.Target, d.ChannelType).Inc()
+		w.opts.Metrics.Enqueued.WithLabelValues(channelLabel(d), d.ChannelType).Inc()
 	}
 
 	w.Wake()
 	return items, nil
 }
 
+// channelLabel is what the metric labels key on.
+//
+// It is the resolved instance, never the target: a target is caller-supplied
+// text, and since this milestone it may carry an email address. Labelling on it
+// would mint a Prometheus series per recipient — and /metrics is deliberately
+// unauthenticated, so those addresses would be readable by anyone who can reach
+// the port.
+//
+// The fallback is for rows written before the column existed; the migration
+// backfills them, so it should never be reached in practice.
+func channelLabel(d *store.Delivery) string {
+	if d.Channel != "" {
+		return d.Channel
+	}
+	return d.Target
+}
+
 // TargetSpec is one place a message should go.
 type TargetSpec struct {
-	Target      string // the alias the caller used
+	// Target is the reference the caller wrote, stored so an outcome can echo
+	// it back verbatim.
+	Target string
+	// Channel is the instance the target resolved to, fixed at accept time.
+	// The worker must not resolve it again: by the time it runs, the
+	// configuration may name a different instance, and this delivery was
+	// accepted against the one recorded here.
+	Channel string
+	// Recipients is the addressing the caller supplied, if any.
+	Recipients  []string
 	ChannelType string
 }
 
@@ -320,7 +348,11 @@ func (w *Worker) process(ctx context.Context, d *store.Delivery) {
 	defer cancel()
 
 	start := time.Now()
-	res := w.opts.Router.Deliver(attemptCtx, d.RequestID, d.Target, msg)
+	res := w.opts.Router.Deliver(attemptCtx, d.RequestID, channel.Target{
+		Ref:        d.Target,
+		Instance:   d.Channel,
+		Recipients: d.Recipients,
+	}, msg)
 	elapsed := time.Since(start)
 
 	w.opts.Metrics.ObserveDelivery(d.ChannelType, res.Class().String(), elapsed)
@@ -333,7 +365,7 @@ func (w *Worker) process(ctx context.Context, d *store.Delivery) {
 			w.opts.Log.Error("queue: recording delivery failed",
 				slog.String("delivery", d.ID), slog.String("error", err.Error()))
 		}
-		w.opts.Metrics.Delivered.WithLabelValues(d.Target, d.ChannelType).Inc()
+		w.opts.Metrics.Delivered.WithLabelValues(channelLabel(d), d.ChannelType).Inc()
 		w.discard(d)
 
 	case channel.ClassPermanent:
@@ -435,7 +467,7 @@ func (w *Worker) release(ctx context.Context, d *store.Delivery, reason, skipRea
 		return
 	}
 	if released {
-		w.opts.Metrics.Released.WithLabelValues(d.Target, d.ChannelType).Inc()
+		w.opts.Metrics.Released.WithLabelValues(channelLabel(d), d.ChannelType).Inc()
 	}
 }
 
