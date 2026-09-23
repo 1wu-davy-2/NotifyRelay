@@ -53,6 +53,13 @@ jobs:
             driver: sqlite
             path: data/notifyrelay.db
             spool_dir: data/spool
+          admin:
+            # On, so that the interface check below has something to reach. No
+            # password hash and no stored administrator, which is the first-run
+            # state: the sign-in screen is what a fresh deployment serves.
+            enabled: true
+            session_key: "0000000000000000000000000000000000000000000000000000000000000000"
+            session_ttl: 12h
           auth:
             api_keys:
               - name: ci
@@ -66,7 +73,7 @@ jobs:
       # user — the failure the Dockerfile had.
       - name: The container starts and reports listening
         run: |
-          docker run -d --name nr \
+          docker run -d --name nr -p 8080:8080 \
             -v /tmp/nr/config.yaml:/etc/notifyrelay/config.yaml:ro \
             notifyrelay:ci
 
@@ -99,6 +106,53 @@ jobs:
       # would have failed above; this checks the probe agrees with the log.
       - name: The healthcheck succeeds against the running container
         run: docker exec nr /notifyrelay --healthcheck 127.0.0.1:8080
+
+      # The interface is a build artefact embedded in the binary at compile
+      # time, so a Dockerfile that forgets to build it produces an image that
+      # starts, listens, passes the healthcheck and answers every page — with a
+      # page saying the frontend was not built. Everything above still passes.
+      # This is the step that notices.
+      - name: The admin interface is in the image
+        run: |
+          body=$(curl -fsS http://127.0.0.1:8080/admin/ || true)
+
+          if [ -z "$body" ]; then
+            echo "::error::/admin/ did not answer"
+            exit 1
+          fi
+
+          if printf '%s' "$body" | grep -q "Frontend not built"; then
+            echo "::error::the image was built without the admin interface — the"
+            echo "::error::Dockerfile's frontend stage did not run, or web/dist did"
+            echo "::error::not reach the Go stage"
+            printf '%s\n' "$body" | head -40
+            exit 1
+          fi
+
+          if ! printf '%s' "$body" | grep -q '<div id="root">'; then
+            echo "::error::/admin/ answered something that is not the shell"
+            printf '%s\n' "$body" | head -40
+            exit 1
+          fi
+
+          # The shell alone is not enough: it is an empty div and a script tag,
+          # and a bundle that 404s renders as a blank page. The mount is a thing
+          # this project has already got wrong once.
+          asset=$(printf '%s' "$body" | grep -o 'src="/admin/assets/[^"]*\.js"' \
+            | head -1 | sed 's/.*="//; s/"$//')
+
+          if [ -z "$asset" ]; then
+            echo "::error::the shell references no bundle"
+            exit 1
+          fi
+
+          code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8080$asset")
+          if [ "$code" != "200" ]; then
+            echo "::error::$asset answered $code; the interface would render as a blank page"
+            exit 1
+          fi
+
+          echo "the admin shell and its bundle are served"
 
       - name: The database was actually created
         run: |

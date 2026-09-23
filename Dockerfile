@@ -1,5 +1,37 @@
 # syntax=docker/dockerfile:1
 
+# ---------------------------------------------------------------------------
+# The admin interface, which the Go binary embeds.
+#
+# It has to be built before the Go stage, and that is a build-order fact rather
+# than a preference: `//go:embed all:dist` resolves at compile time, so a binary
+# compiled without web/dist has no interface at all. Such a binary still starts,
+# still listens, and still answers every page — with a page saying the frontend
+# was not built. Nothing about the container looks wrong from the outside.
+#
+# $BUILDPLATFORM rather than $TARGETPLATFORM: Vite's output is the same bytes on
+# every architecture, so building it under emulation for an arm64 image would be
+# minutes of QEMU for nothing.
+#
+# The two COPYs are the cache shape, not tidiness: the lockfile alone comes
+# first so that editing a source file does not re-install every dependency. npm
+# ci rather than npm install, so the stage installs exactly what the lockfile
+# says — which is what makes the image reproducible.
+#
+# `COPY web/ ./` must not bring a host node_modules with it. It would overwrite
+# the container's, and esbuild and rollup ship native binaries — a Windows
+# checkout's would fail on linux/amd64 with an error about the wrong platform.
+# .dockerignore is what prevents it; see the note there.
+# ---------------------------------------------------------------------------
+FROM --platform=$BUILDPLATFORM node:22-alpine AS frontend
+WORKDIR /src/web
+
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+
+COPY web/ ./
+RUN npm run build
+
 # Must satisfy the go directive in go.mod. github.com/wneessen/go-mail
 # requires Go >= 1.25, so a 1.24 base image cannot build this project.
 FROM --platform=$BUILDPLATFORM golang:1.25 AS build
@@ -14,6 +46,11 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+
+# The interface, over the top of wherever the context would have put it —
+# .dockerignore excludes web/dist, so there is normally nothing there and this
+# is the only thing that makes the embed pattern match.
+COPY --from=frontend /src/web/dist ./web/dist
 
 # CGO_ENABLED=0 keeps the result a static binary so it can run on distroless.
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \

@@ -1,6 +1,9 @@
 # Keep the build context small. NOTICE, LICENSE, configs/ and docs/ are
 # deliberately NOT excluded: the Dockerfile copies NOTICE and LICENSE into the
 # image, which the AGPL requires to travel with the binary.
+#
+# web/ is not excluded either — the frontend stage builds it. These two are,
+# and the first one is not an optimisation:
 
 .git
 .gitignore
@@ -14,3 +17,17 @@ bin/
 # Local secrets must never enter a build context.
 .env
 configs/notifyrelay.yaml
+
+# web/node_modules MUST be excluded, and a build that gets this wrong fails in a
+# way that reads like a broken project rather than a broken context: the
+# frontend stage runs `COPY web/ ./` after `npm ci`, so a host node_modules
+# would overwrite the container's. esbuild and rollup ship native binaries, and
+# a Windows checkout's would fail on linux/amd64 with an error about the wrong
+# platform. It is also a couple of hundred megabytes of context.
+web/node_modules/
+
+# And the build output, because the Dockerfile builds it rather than taking
+# whatever happens to be on the machine. A stale dist/ in the context would be
+# embedded instead of the one just built, so the image would serve an interface
+# from before the last source change — with nothing anywhere saying so.
+web/dist/
