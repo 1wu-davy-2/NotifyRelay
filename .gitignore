@@ -28,3 +28,10 @@ Thumbs.db
 /web/dist/*
 !/web/dist/.gitkeep
 /web/node_modules/
+
+# Local scratch: agent configuration, a crash dump from the shell this project
+# is developed in on Windows, and the design mockups a theme is worked out in
+# before it reaches tokens.css. None of it is built, shipped or referenced.
+/.claude/
+/theme/
+bash.exe.stackdump
