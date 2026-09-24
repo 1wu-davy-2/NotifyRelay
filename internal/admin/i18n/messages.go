@@ -260,6 +260,31 @@ type Messages struct {
 	AuditEmptyHead    string // it does, and nothing has happened yet
 	AuditEmptyBody    string
 
+	// The actions, named for the operator rather than for the log.
+	//
+	// What the store holds is a machine key — "channel.test_notification" —
+	// because it is what the row is *about* and not a sentence, and it is what
+	// the API returns. Rendering it raw puts a token in a column headed in the
+	// reader's language, so the table names each one. A key this build does not
+	// know is still shown as itself rather than blanked; see actionLabel in
+	// web/src/pages/Audit.tsx.
+	//
+	// The detail column is deliberately not in this table. It is a sentence
+	// assembled by the server at record time — "replayed delivery 3f2a (request
+	// 91c4)" — and translating it means storing the values it interpolates
+	// rather than the sentence, which is a change to the stored record and not
+	// to the copy.
+	AuditActionChannelCreate           string
+	AuditActionChannelUpdate           string
+	AuditActionChannelDelete           string
+	AuditActionChannelTestNotification string
+	AuditActionBreakerReset            string
+	AuditActionKeyCreate               string
+	AuditActionKeyUpdate               string
+	AuditActionKeyDelete               string
+	AuditActionDeliveryReplay          string
+	AuditActionAdminPassword           string
+
 	// ---------------------------------------------------------------- keys
 
 	KeysIntro            string

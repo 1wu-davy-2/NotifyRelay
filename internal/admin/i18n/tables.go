@@ -254,6 +254,17 @@ var zh = Messages{
 	AuditEmptyBody: "通过本界面做出的每一项变更都会记在这里——新建、编辑、删除渠道，" +
 		"重置熔断器，以及创建、禁用、删除 API 密钥。",
 
+	AuditActionChannelCreate:           "新建渠道",
+	AuditActionChannelUpdate:           "修改渠道",
+	AuditActionChannelDelete:           "删除渠道",
+	AuditActionChannelTestNotification: "发送测试通知",
+	AuditActionBreakerReset:            "重置熔断器",
+	AuditActionKeyCreate:               "新建密钥",
+	AuditActionKeyUpdate:               "修改密钥",
+	AuditActionKeyDelete:               "删除密钥",
+	AuditActionDeliveryReplay:          "重投投递",
+	AuditActionAdminPassword:           "修改密码",
+
 	// ------------------------------------------------------------- keys
 	KeysIntro: "上游用它做鉴权。密钥只在创建时显示一次——库里只有摘要，" +
 		"所以此页面无法再次显示它。丢失就删除重建。",
@@ -665,6 +676,17 @@ var en = Messages{
 		"interface is being written down. This is not the same as an empty trail, and " +
 		"the difference matters — an empty page here means nothing was recorded, not " +
 		"that nothing happened.",
+	AuditActionChannelCreate:           "Channel created",
+	AuditActionChannelUpdate:           "Channel updated",
+	AuditActionChannelDelete:           "Channel deleted",
+	AuditActionChannelTestNotification: "Test notification sent",
+	AuditActionBreakerReset:            "Breaker reset",
+	AuditActionKeyCreate:               "Key created",
+	AuditActionKeyUpdate:               "Key updated",
+	AuditActionKeyDelete:               "Key deleted",
+	AuditActionDeliveryReplay:          "Delivery replayed",
+	AuditActionAdminPassword:           "Password changed",
+
 	AuditEmptyHead: "Nothing yet",
 	AuditEmptyBody: "Every change made through this interface is recorded here — creating, " +
 		"editing and deleting a channel, resetting a breaker, and creating, disabling " +

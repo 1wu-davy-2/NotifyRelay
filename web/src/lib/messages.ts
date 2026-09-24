@@ -239,6 +239,16 @@ export interface Messages {
   /** it does, and nothing has happened yet */
   AuditEmptyHead: string
   AuditEmptyBody: string
+  AuditActionChannelCreate: string
+  AuditActionChannelUpdate: string
+  AuditActionChannelDelete: string
+  AuditActionChannelTestNotification: string
+  AuditActionBreakerReset: string
+  AuditActionKeyCreate: string
+  AuditActionKeyUpdate: string
+  AuditActionKeyDelete: string
+  AuditActionDeliveryReplay: string
+  AuditActionAdminPassword: string
 
   // ---------------------------------------------------------------- keys
   KeysIntro: string
