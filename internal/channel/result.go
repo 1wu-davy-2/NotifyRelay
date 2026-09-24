@@ -3,6 +3,7 @@ package channel
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -211,10 +212,38 @@ func FromRecipients(rs []Recipient) Result {
 	case accepted > 0:
 		res.Err = fmt.Errorf("channel: %d of %d recipients accepted, the rest failed (%s)",
 			accepted, len(rs), worst)
+		res.Detail = failureDetail(rs)
 	default:
 		res.Err = fmt.Errorf("channel: all %d recipients failed (%s)", len(rs), worst)
+		res.Detail = failureDetail(rs)
 	}
 	return res
+}
+
+// failureDetail renders what the peers said, one line per refused recipient.
+//
+// Without it the overall Result says only that something failed and how badly —
+// "all 1 recipients failed (PERMANENT)" — while the peer's own words, the SMTP
+// reply code or the HTTP status, sit in the per-recipient entries a caller may
+// never look at. That is the difference between an operator who can fix their
+// relay and one who can only see that it is broken.
+//
+// The address is part of the line on purpose: with several recipients, "the
+// peer refused one of these" is not actionable until you know which.
+func failureDetail(rs []Recipient) string {
+	var b strings.Builder
+	for _, r := range rs {
+		if r.Accepted || r.Detail == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("; ")
+		}
+		b.WriteString(r.Address)
+		b.WriteString(": ")
+		b.WriteString(r.Detail)
+	}
+	return b.String()
 }
 
 // WithElapsed returns a copy of r with the elapsed duration recorded.

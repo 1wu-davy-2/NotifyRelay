@@ -404,8 +404,24 @@ func (w *Worker) releaseNoCapacity(ctx context.Context, d *store.Delivery, attem
 		w.deadLetter(ctx, d, attempt, reason)
 		return
 	}
-	w.release(ctx, d, noCapacityReason(res.Detail), string(res.Reason()),
+	w.release(ctx, d, noCapacityReason(noCapacityDetail(res)), string(res.Reason()),
 		time.Now().UTC().Add(w.opts.ReleaseDelay))
+}
+
+// noCapacityDetail picks what the release reason appends to its headline.
+//
+// Detail is the channel's own account of the failure and comes first. Error is
+// the fallback rather than nothing at all, because a channel that never got to
+// describe the failure still has something to say — and dropping it is how a
+// delivery that could not reach its relay at all came to be recorded as the
+// bare words "no channel capacity", which names the symptom and hides the
+// cause. Only the breaker path reaches here with both empty, and there the
+// headline is the whole story: the channel was never called.
+func noCapacityDetail(res router.TargetResult) string {
+	if res.Detail != "" {
+		return res.Detail
+	}
+	return res.Error
 }
 
 // retryOrGiveUp reschedules a delivery, or dead-letters it when the policy
@@ -490,7 +506,7 @@ func (w *Worker) attempt(d *store.Delivery, class, detail, errMsg, skipReason st
 const classPayloadMissing = "PAYLOAD_MISSING"
 
 // noCapacityReason words the release reason without a dangling separator: a
-// delivery held back by the breaker has no detail to append, and
+// failure nothing could describe has no detail to append, and
 // "no channel capacity: " reads like a message that got truncated.
 func noCapacityReason(detail string) string {
 	if detail == "" {
