@@ -66,7 +66,7 @@ git clone https://github.com/1wu-davy-2/NotifyRelay.git && cd NotifyRelay
 docker compose up -d
 ```
 
-打开 `http://localhost:8080/admin`，第一次访问会看到「创建管理员」页面。建完账号，
+打开 `http://localhost:18080/admin`，第一次访问会看到「创建管理员」页面。建完账号，
 会落到一个**四步的上手清单**上：建渠道 → 建 API Key → 发一条测试通知 → 看投递结果。
 四步都完成后这个入口自动从导航里消失。
 
@@ -87,7 +87,8 @@ docker compose up -d
 > 不想留这个窗口，就在配置里写死 `admin.password_hash`（用
 > `docker compose run --rm notifyrelay --hash-password '...'` 生成），那个页面就不会出现。
 
-8080 被占用的话，`.env` 里写 `NOTIFYRELAY_HTTP_PORT=18080` 即可，不用改 compose 文件。
+18080 被占用的话，`.env` 里写 `NOTIFYRELAY_HTTP_PORT=其他端口` 即可，不用改 compose 文件。
+容器里的服务始终监听 8080，改的只是宿主机这一侧的映射。
 
 确认它活着。镜像是 distroless，没有 shell，所以探针就是二进制自己：
 
@@ -98,7 +99,7 @@ docker compose exec notifyrelay /notifyrelay --healthcheck 127.0.0.1:8080
 在后台建好一个通道、一个 API Key 之后，发一条：
 
 ```bash
-curl -X POST http://127.0.0.1:8080/api/v1/notify \
+curl -X POST http://127.0.0.1:18080/api/v1/notify \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -118,7 +119,7 @@ curl -X POST http://127.0.0.1:8080/api/v1/notify \
 收件人只存在于请求里，加一个 `to` 字段（或者写成等价的 `mailto://` 目标）：
 
 ```bash
-curl -X POST http://127.0.0.1:8080/api/v1/notify \
+curl -X POST http://127.0.0.1:18080/api/v1/notify \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -149,7 +150,7 @@ curl -X POST http://127.0.0.1:8080/api/v1/notify \
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-     http://127.0.0.1:8080/api/v1/messages/282d67a1b3c4e5f6
+     http://127.0.0.1:18080/api/v1/messages/282d67a1b3c4e5f6
 ```
 
 ```json

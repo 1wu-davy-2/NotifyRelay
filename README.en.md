@@ -73,7 +73,7 @@ git clone https://github.com/1wu-davy-2/NotifyRelay.git && cd NotifyRelay
 docker compose up -d
 ```
 
-Open `http://localhost:8080/admin`. The first visit offers to create an
+Open `http://localhost:18080/admin`. The first visit offers to create an
 administrator. After that, channels and API keys are added from the same place.
 
 None of the following is something you do by hand; it is listed so you know it
@@ -94,8 +94,9 @@ happened:
 > `docker compose run --rm notifyrelay --hash-password '...'`) and the page is
 > never offered.
 
-If 8080 is taken, set `NOTIFYRELAY_HTTP_PORT=18080` in `.env` — the compose file
-does not need editing.
+If 18080 is taken, set `NOTIFYRELAY_HTTP_PORT=<another port>` in `.env` — the
+compose file does not need editing. Only the host side moves: the service listens
+on 8080 inside the container either way.
 
 Confirm it is up. The image is distroless, so the probe is the binary itself:
 
@@ -106,7 +107,7 @@ docker compose exec notifyrelay /notifyrelay --healthcheck 127.0.0.1:8080
 With a channel and an API key created in the UI, send something:
 
 ```bash
-curl -X POST http://127.0.0.1:8080/api/v1/notify \
+curl -X POST http://127.0.0.1:18080/api/v1/notify \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -128,7 +129,7 @@ exists only in the request — add a `to` field, or the equivalent `mailto://`
 target:
 
 ```bash
-curl -X POST http://127.0.0.1:8080/api/v1/notify \
+curl -X POST http://127.0.0.1:18080/api/v1/notify \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -163,7 +164,7 @@ Ask what happened to it:
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-     http://127.0.0.1:8080/api/v1/messages/282d67a1b3c4e5f6
+     http://127.0.0.1:18080/api/v1/messages/282d67a1b3c4e5f6
 ```
 
 ```json
