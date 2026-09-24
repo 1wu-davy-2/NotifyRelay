@@ -50,10 +50,19 @@ func classify(err error) channel.Result {
 		return channel.ConnectError(err, connectDetail(err))
 	}
 
-	detail := fmt.Sprintf("smtp code=%d reason=%s", sendErr.ErrorCode(), sendErr.Reason.String())
-	if enhanced := sendErr.EnhancedStatusCode(); enhanced != "" {
-		detail += " enhanced=" + enhanced
-	}
+	// The server's own words are the point of this line.
+	//
+	// go-mail renders a SendError as "<the step that failed>: <the server's
+	// reply>", so this carries both. It used to carry only the first half —
+	// Reason.String() names the step and not the refusal — and a 501 from a
+	// relay that would not accept the sender was recorded as the bare phrase
+	// "sending SMTP MAIL FROM command", with the sentence explaining it sitting
+	// unread in the error this function already held.
+	//
+	// The enhanced status code is no longer appended separately: go-mail parses
+	// it out of the reply text in the first place, so it is already in what
+	// follows, and repeating it at the end read as a second and different code.
+	detail := fmt.Sprintf("smtp code=%d reason=%s", sendErr.ErrorCode(), sendErr.Error())
 
 	if code := sendErr.ErrorCode(); code >= 500 {
 		return channel.Permanent(err, detail)

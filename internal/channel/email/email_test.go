@@ -34,6 +34,10 @@ type fakeBackend struct {
 	mu       sync.Mutex
 	messages []capturedMessage
 	reject   map[string]error
+	// rejectFrom, when set, refuses every MAIL FROM — the shape of a relay that
+	// turns the sender away before it has looked at any recipient. Set before
+	// the server starts, so it needs no lock.
+	rejectFrom error
 }
 
 func newFakeBackend() *fakeBackend {
@@ -65,6 +69,9 @@ type fakeSession struct {
 func (s *fakeSession) Reset()         { s.from = ""; s.rcpts = nil }
 func (s *fakeSession) Logout() error  { return nil }
 func (s *fakeSession) Mail(from string, _ *smtp.MailOptions) error {
+	if s.backend.rejectFrom != nil {
+		return s.backend.rejectFrom
+	}
 	s.from = from
 	return nil
 }
@@ -318,6 +325,47 @@ func TestClassify_PermanentRejectionIsPermanent(t *testing.T) {
 	}
 	if res.Class.Retryable() {
 		t.Error("PERMANENT must not be retryable")
+	}
+}
+
+// The sentence the server wrote has to survive into the detail.
+//
+// It is the difference between a record that says a delivery failed and one
+// that says why. A relay refusing the sender, a relay refusing the recipient
+// and a relay that is simply unreachable all arrive as a class and a code, and
+// the reply text is the only part an operator can act on. It used to be dropped
+// twice over: classify kept go-mail's name for the step that failed, and
+// FromRecipients did not summarise the recipients at all — so the attempts
+// table showed "no channel capacity" for a relay that had answered in plain
+// words.
+func TestClassify_KeepsTheServersOwnWords(t *testing.T) {
+	const reply = "mail from address must be same as authorization user"
+
+	be := newFakeBackend()
+	be.rejectFrom = &smtp.SMTPError{Code: 501, Message: reply}
+	host, port := startFakeSMTP(t, be)
+
+	ch := newTestChannel(t, map[string]any{
+		"host": host, "port": port, "tls": "none",
+		"from": "noreply@example.com",
+		"to":   []any{"ops@example.com"},
+	})
+
+	res := ch.Send(context.Background(), plainMessage(), channel.Target{})
+
+	if res.Class != channel.ClassPermanent {
+		t.Fatalf("class = %v (%v), want PERMANENT for a 501", res.Class, res.Err)
+	}
+	if len(res.Recipients) != 1 {
+		t.Fatalf("got %d recipient results, want 1", len(res.Recipients))
+	}
+	if !strings.Contains(res.Recipients[0].Detail, reply) {
+		t.Errorf("recipient detail = %q, want the server's reply in it", res.Recipients[0].Detail)
+	}
+	// And it has to reach the overall result, which is the only thing the queue
+	// records.
+	if !strings.Contains(res.Detail, reply) {
+		t.Errorf("overall detail = %q, want the server's reply carried up from the recipient", res.Detail)
 	}
 }
 
