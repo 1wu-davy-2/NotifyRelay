@@ -110,9 +110,9 @@ func TestApplyPreferencesLeavesTheDefaultAndTheOriginalAlone(t *testing.T) {
 
 	before := string(distShell)
 
-	got := string(applyPreferences(distShell, shellFor("dark", i18n.ZH)))
+	got := string(applyPreferences(distShell, shellFor("light", i18n.ZH)))
 	if got != before {
-		t.Error("a dark, Chinese request changed the shell")
+		t.Error("a light, Chinese request changed the shell")
 	}
 	if string(distShell) != before {
 		t.Fatal("applyPreferences mutated the shared shell")
@@ -120,16 +120,16 @@ func TestApplyPreferencesLeavesTheDefaultAndTheOriginalAlone(t *testing.T) {
 }
 
 // Anything unrecognised is the default rather than an error.
-func TestThemeOfFallsBackToDark(t *testing.T) {
+func TestThemeOfFallsBackToLight(t *testing.T) {
 	cases := []struct {
 		name  string
 		theme string
 		want  string
 	}{
-		{"no cookie", "", "dark"},
-		{"dark", "dark", "dark"},
+		{"no cookie", "", "light"},
 		{"light", "light", "light"},
-		{"something else entirely", "solarized", "dark"},
+		{"dark", "dark", "dark"},
+		{"something else entirely", "solarized", "light"},
 	}
 
 	for _, tc := range cases {

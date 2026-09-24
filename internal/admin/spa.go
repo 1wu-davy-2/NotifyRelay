@@ -202,21 +202,27 @@ func applyPreferences(shell []byte, r *http.Request) []byte {
 	return shellHead.ReplaceAllFunc(shell, func([]byte) []byte { return tag })
 }
 
-// themeOf reads the interface's theme choice, defaulting to dark.
+// themeOf reads the interface's theme choice, defaulting to light.
 //
 // Anything unrecognised is the default rather than an error, for the same
 // reason i18n.Parse falls back: a preference the server does not understand is
 // not a failure, and the alternative is a 400 on a page whose whole purpose is
 // to be looked at.
+//
+// The default is written here as well as in web/src/lib/theme.ts and in
+// index.html, and all three have to move together: this one is what the server
+// puts in the markup for every page it serves, index.html is what Vite serves
+// in a dev checkout with no Go process in front of it, and theme.ts is what a
+// browser with no cookie falls back to once the bundle runs.
 func themeOf(r *http.Request) string {
 	c, err := r.Cookie(themeCookie)
 	if err != nil {
-		return "dark"
-	}
-	if c.Value == "light" {
 		return "light"
 	}
-	return "dark"
+	if c.Value == "dark" {
+		return "dark"
+	}
+	return "light"
 }
 
 // unbuiltHandler is what a checkout without `npm run build` serves.

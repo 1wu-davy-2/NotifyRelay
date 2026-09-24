@@ -66,7 +66,7 @@ func (h *harness) shellPage(t *testing.T, path string, lang i18n.Lang, cookies .
 // langAttr reads the lang attribute off the document's opening tag.
 //
 // The value and not a substring of the tag. The tag the server writes carries
-// the theme beside the language — `<html lang="zh-CN" data-theme="dark">` — so
+// the theme beside the language — `<html lang="zh-CN" data-theme="light">` — so
 // an assertion looking for the whole of `<html lang="zh-CN">` is an assertion
 // about the attribute order, and it fails the day the theme is written first.
 // The server-rendered pages this replaced had one attribute on that tag, which

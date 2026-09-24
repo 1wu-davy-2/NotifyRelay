@@ -33,14 +33,24 @@ const COOKIE = 'nr_theme'
 /**
  * The theme to use when nothing is stored.
  *
- * Dark, matching the interface's previous and only appearance. Deliberately not
- * `prefers-color-scheme`: an operator who has set their desktop to light has
- * said something about their desktop, and a monitoring interface that changes
- * colour under them because of it is one they cannot take a stable screenshot
- * of. The switch is one click and the choice is remembered, which is the same
- * argument the language switcher makes.
+ * Light. This interface is read in a bright room in the middle of a working
+ * day, and a page that starts dark is one an operator turns off before they
+ * have read anything on it. It was dark, which was the only appearance the
+ * server-rendered pages ever had; the switch is one click either way and the
+ * choice is remembered.
+ *
+ * Deliberately not `prefers-color-scheme`: an operator who has set their
+ * desktop to dark has said something about their desktop, and a monitoring
+ * interface that changes colour under them because of it is one they cannot
+ * take a stable screenshot of. The switch is one click and the choice is
+ * remembered, which is the same argument the language switcher makes.
+ *
+ * Changing this value means changing two more, and they are not optional:
+ * index.html carries the same default for `npm run dev`, and themeOf in
+ * internal/admin/spa.go carries it for every served page. A build that moves
+ * only this one flashes the other theme on every load.
  */
-const DEFAULT: Theme = 'dark'
+const DEFAULT: Theme = 'light'
 
 /** A year. A preference, not a credential — the same lifetime as the language. */
 const MAX_AGE = 365 * 24 * 60 * 60
@@ -115,10 +125,11 @@ export function apply(theme: Theme): void {
  *
  * On a normal page load the server has already written `data-theme` into the
  * markup — that is what stops the flash — but it does not write the meta tag,
- * which index.html carries with the dark default. So the attribute matches and
- * the meta does not, and a version of this that skipped on a matching attribute
- * left every reload of a light theme with a dark browser chrome. The bug is
- * invisible on the page and obvious on a phone.
+ * which index.html carries with the default. So a stored theme that is not the
+ * default leaves the attribute matching and the meta not, and a version of this
+ * that skipped on a matching attribute left every reload of the other theme
+ * with a browser chrome from this one. The bug is invisible on the page and
+ * obvious on a phone.
  *
  * Reflecting without persisting is also what keeps this from writing the cookie
  * again on every single page load.
