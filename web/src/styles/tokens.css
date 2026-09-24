@@ -166,19 +166,34 @@
   --ease: 0.15s ease;
 }
 
-/* The page colour before any theme is applied.
+/* The canvas.
  *
  * `data-theme` is always present — the server writes it as it serves the shell,
  * and index.html carries the default for `npm run dev`, where no server is
- * involved. This rule is the backstop for the one case neither covers: a
- * document with the attribute stripped, or a build served by something other
- * than this project's Go process. Without it the body falls back to the
- * browser's white, which on a dark deployment is a full-screen flash.
+ * involved. The fallback covers the one case neither does: a document with the
+ * attribute stripped, or a build served by something other than this project's
+ * Go process. Without it the canvas falls back to the browser's white, which on
+ * a dark deployment is a full-screen flash.
  *
- * The value is the dark theme's, because dark is the default and therefore the
- * likelier answer for a page that has lost the attribute. */
+ * ---------------------------------------------------------------------------
+ * Why this reads the token instead of repeating a colour, which is what it did.
+ *
+ * It held the dark theme's #0a0c12, and it held it unconditionally — this rule
+ * is not inside a [data-theme] block. The root element's background *is* the
+ * canvas, and a canvas background stops the body's background from propagating
+ * to it. So the page colour was dark in both themes, while
+ * `html, body, #root { height: 100% }` makes body's box exactly one viewport
+ * tall — and everything below the fold, where body's box does not reach, was
+ * painted with the canvas. In light mode that is a black band under the
+ * content: a long audit trail, a code block, a table that scrolls.
+ *
+ * Reading --bg keeps the backstop and drops the bug. The canvas is the theme's
+ * own colour, so it agrees with body by construction rather than by somebody
+ * remembering to change two values together.
+ * ---------------------------------------------------------------------------
+ */
 html {
-  background: #0a0c12;
+  background: var(--bg, #f6f7f9);
 }
 
 /* What the operator sees if the bundle never runs. Styled rather than left as
